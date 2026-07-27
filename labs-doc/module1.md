@@ -125,7 +125,7 @@ The execution loop operates in five distinct phases:
 | Component | Implementation | Role |
 |-----------|----------------|------|
 | **Agent SDK** | Anthropic Agent SDK (`claude_agent_sdk`) | Manages turn execution, state history, and local tool dispatch |
-| **Foundation Model** | Claude 3.5 Sonnet / Claude 3.7 Sonnet | Evaluates context, determines task trajectory, and generates reports |
+| **Foundation Model** | Claude Sonnet 4.5 / Claude Sonnet 5 | Evaluates context, determines task trajectory, and generates reports |
 | **Built-in Tools** | `Read`, `Glob`, `Grep` | Native filesystem tools for reading content and pattern matching |
 | **Runtime & Tooling** | Python 3.10+ & `uv` | Asynchronous runtime (`asyncio`) and fast package management (`uv`) |
 | **Authentication** | `ANTHROPIC_API_KEY` | Environment variable for API request authorization |
@@ -201,6 +201,9 @@ Install required dependencies using `uv` (recommended) or `pip`:
 | `rich` | Terminal text formatting and markdown rendering |
 | `python-dotenv` | Loads environment variables from `.env` files |
 
+> [!NOTE]
+> The install name (`claude-agent-sdk`) uses hyphens following PyPI convention. The import name (`claude_agent_sdk`) uses underscores following Python module convention. Both refer to the same package.
+
 ```python
 # Install dependencies using uv (or fallback to standard pip)
 !uv pip install -q claude-agent-sdk rich python-dotenv || pip install -q claude-agent-sdk rich python-dotenv
@@ -251,6 +254,7 @@ TARGET_DIR = "data"  # Path to target codebase directory
 # Define execution options and whitelist read-only tools
 options = ClaudeAgentOptions(
     allowed_tools=["Read", "Glob", "Grep"],
+    model="claude-sonnet-4-5",  # Pin a specific model; omit to use the SDK default
 )
 
 console = Console()
@@ -312,9 +316,21 @@ flowchart LR
 async def execute_audit(task_prompt: str, agent_options: ClaudeAgentOptions) -> str:
     final_output = ""
     async for message in query(prompt=task_prompt, options=agent_options):
+        # Live progress: print what Claude is doing each turn
+        if isinstance(message, AssistantMessage):
+            tool_calls = [
+                block.name
+                for block in message.content
+                if hasattr(block, "type") and block.type == "tool_use"
+            ]
+            if tool_calls:
+                console.print(f"[dim]  → Tool calls: {', '.join(tool_calls)}[/dim]")
+
+        # Final result: check subtype before accessing .result
         if isinstance(message, ResultMessage):
             if message.subtype == "success":
-                final_output = message.result
+                # .result is only present on the success variant
+                final_output = message.result or ""
             else:
                 final_output = f"Execution stopped with status: {message.subtype}"
     return final_output
@@ -353,6 +369,7 @@ Extend the agent workflow to experiment with loop parameters and tool configurat
 - **Permission testing**: Add `Edit` or `Write` to `allowed_tools` and prompt the agent to fix a simple `TODO` item. Observe how the tool list alters agent planning.
 - **Turn and budget limits**: Set `max_turns=3` or `max_budget_usd=0.05` on `ClaudeAgentOptions` to test early termination behavior and handle `error_max_turns` in `ResultMessage`.
 - **Reasoning depth**: Adjust the `effort` setting (`"low"`, `"medium"`, or `"high"`) on options to compare token usage and response latency.
+- **Model selection**: Swap `model="claude-sonnet-4-5"` for `model="claude-sonnet-5"` in `ClaudeAgentOptions` and compare response quality and cost across Claude model families. See the [models reference](https://platform.claude.com/docs/en/about-claude/models) for available IDs.
 
 ---
 
