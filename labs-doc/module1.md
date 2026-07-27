@@ -62,18 +62,18 @@ Consider building an automated code audit agent. The agent must explore an unkno
 
 ```mermaid
 flowchart TD
-    A(["User provides task"]) --> B["Configure ClaudeAgentOptions\n(system prompt + allowed tools)"]
+    A(["User provides task"]) --> B["Configure ClaudeAgentOptions<br/>(system prompt + allowed tools)"]
     B --> C["Pass task to query()"]
-    C --> D{"Claude evaluates state:\nselect tool call"}
-    D -->|"Read file"| E["Read tool returns\nfile contents"]
-    D -->|"Glob pattern"| F["Glob tool returns\nmatching paths"]
-    D -->|"Grep regex"| G["Grep tool returns\nmatching lines"]
-    E --> H["SDK appends tool_result\nto context"]
+    C --> D{"Claude evaluates state:<br/>select tool call"}
+    D -->|"Read file"| E["Read tool returns<br/>file contents"]
+    D -->|"Glob pattern"| F["Glob tool returns<br/>matching paths"]
+    D -->|"Grep regex"| G["Grep tool returns<br/>matching lines"]
+    E --> H["SDK appends tool_result<br/>to context"]
     F --> H
     G --> H
     H --> I{"Task complete?"}
     I -->|"No — iterate turn"| D
-    I -->|"Yes — stop condition"| J(["Return final answer\nvia ResultMessage"])
+    I -->|"Yes — stop condition"| J(["Return final answer<br/>via ResultMessage"])
 
     style A fill:#e3f2fd,stroke:#1565c0,color:#0d47a1
     style B fill:#f5f5f5,stroke:#616161,color:#212121
@@ -92,11 +92,11 @@ flowchart TD
 ```mermaid
 flowchart TD
     A["query(prompt, options)"] --> B["SDK sends prompt & tool definitions to Claude"]
-    B --> C{"Claude response contains\ntool_use block?"}
-    C -->|"Yes"| D["SDK executes requested\ntool locally"]
-    D --> E["SDK appends tool_result\nto message history"]
+    B --> C{"Claude response contains<br/>tool_use block?"}
+    C -->|"Yes"| D["SDK executes requested<br/>tool locally"]
+    D --> E["SDK appends tool_result<br/>to message history"]
     E --> B
-    C -->|"No — text response"| F["SDK yields ResultMessage\nwith final output"]
+    C -->|"No — text response"| F["SDK yields ResultMessage<br/>with final output"]
 
     style A fill:#e3f2fd,stroke:#1565c0,color:#0d47a1
     style B fill:#f5f5f5,stroke:#616161,color:#212121
