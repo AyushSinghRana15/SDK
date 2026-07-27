@@ -1,6 +1,6 @@
-# Module 1: The Agent Loop & Built-in Tools
+# Lab 1: The Agent Loop & Built-in Tools
 
-> The Agent SDK acts as an event loop for tool use—repeatedly allowing Claude to reason, take actions, observe execution results, and adjust course until a task is complete. Rather than manually issuing API requests, parsing tool call responses, executing local functions, and appending results back to the context window, the SDK orchestrates the entire cycle within a single execution context.
+> **The Agent SDK** acts as an event loop for tool use—repeatedly allowing Claude to reason, execute local actions, observe tool results, and adjust its plan until a task is completed. Rather than manually calling the API, parsing `tool_use` blocks, executing functions, and appending `tool_result` messages back into conversation history, the SDK orchestrates the entire cycle within a single, high-level execution context.
 
 ```mermaid
 flowchart LR
@@ -24,20 +24,20 @@ flowchart LR
 
 # Problem Statement / Use Case Overview
 
-Consider the task of building an automated code audit agent. The agent must explore an unknown codebase, locate targeted patterns (such as `TODO` and `FIXME` comments), read surrounding file context, and synthesize its findings into a structured report—without hardcoding execution paths or managing state manually.
+Consider building an automated code audit agent. The agent must explore an unknown codebase, locate targeted patterns (such as `TODO` and `FIXME` comments), inspect surrounding code context, and synthesize its findings into a structured report—without hardcoding file paths or manually managing conversation state.
 
-**The pipeline executes across three primary phases:**
+**The pipeline executes across three primary stages:**
 
-1. **Agent configuration** — Initialize execution options with a role-defining system prompt and an explicit whitelist of allowed tools (`Read`, `Glob`, `Grep`).
-2. **Autonomous loop execution** — The agent receives a natural-language prompt, evaluates necessary actions, executes tool calls locally, processes tool responses, and iterates until goal completion.
-3. **Structured synthesis** — The agent compiles its observations into a final markdown summary.
+1. **Agent configuration** — Initialize execution options with a system prompt and an explicit whitelist of allowed tools (`Read`, `Glob`, `Grep`).
+2. **Autonomous loop execution** — Pass a natural-language task prompt to `query()`. The agent evaluates necessary actions, executes tool calls locally, processes tool responses, and iterates until the goal is achieved.
+3. **Structured synthesis** — The agent compiles its observations into a clean markdown summary report.
 
 > [!NOTE]
 > ### Why this matters
-> Writing manual orchestrators for multi-turn tool interactions requires extensive boilerplate for state management, error recovery, and message serialization. The Agent SDK abstracts these operational details into an automated runtime while keeping permission boundaries and budget controls fully explicit.
+> Writing manual orchestrators for multi-turn tool interactions requires extensive boilerplate for state management, error handling, and message serialization. The Agent SDK abstracts these operational details into an automated runtime while keeping permission boundaries and budget controls fully explicit.
 
 **Common application patterns include:**
-- Automated codebase exploration and security audits
+- Automated codebase exploration and security auditing
 - Continuous code quality reporting and refactoring analysis
 - Automated technical debt tracking (locating temporary patches, `HACK`, or `DEPRECATED` annotations)
 - Multi-step file inspection and data extraction workflows
@@ -48,11 +48,11 @@ Consider the task of building an automated code audit agent. The agent must expl
 
 | Component | Description |
 |-----------|-------------|
-| **System prompt** | Defines the operational role, constraints, and output requirements for the agent |
-| **User task** | Natural-language prompt specifying the goal and target scope |
-| **Target directory** | Path to the local filesystem scope open for inspection |
+| **System prompt** | Instructions defining the agent's role, constraints, and output requirements |
+| **User task** | Natural-language prompt describing the audit goal and target directory |
+| **Target directory** | Path to the local filesystem codebase scope open for inspection |
 | **Allowed tools** | Explicit list of permitted tools (`["Read", "Glob", "Grep"]`) |
-| **Anthropic API Key** | Authentication credential loaded via environment variable (`ANTHROPIC_API_KEY`) |
+| **Anthropic API Key** | Used to authenticate with the Claude API via environment variable (`ANTHROPIC_API_KEY`) |
 
 ---
 
@@ -62,18 +62,18 @@ Consider the task of building an automated code audit agent. The agent must expl
 
 ```mermaid
 flowchart TD
-    A(["User provides task"]) --> B["Configure ClaudeAgentOptions (system prompt + allowed tools)"]
+    A(["User provides task"]) --> B["Configure ClaudeAgentOptions\n(system prompt + allowed tools)"]
     B --> C["Pass task to query()"]
-    C --> D{"Claude evaluates state: select tool call"}
-    D -->|"Read file"| E["Read tool returns file contents"]
-    D -->|"Glob pattern"| F["Glob tool returns matching paths"]
-    D -->|"Grep regex"| G["Grep tool returns matching lines"]
-    E --> H["SDK appends tool_result to context"]
+    C --> D{"Claude evaluates state:\nselect tool call"}
+    D -->|"Read file"| E["Read tool returns\nfile contents"]
+    D -->|"Glob pattern"| F["Glob tool returns\nmatching paths"]
+    D -->|"Grep regex"| G["Grep tool returns\nmatching lines"]
+    E --> H["SDK appends tool_result\nto context"]
     F --> H
     G --> H
     H --> I{"Task complete?"}
     I -->|"No — iterate turn"| D
-    I -->|"Yes — stop condition"| J(["Return final answer via ResultMessage"])
+    I -->|"Yes — stop condition"| J(["Return final answer\nvia ResultMessage"])
 
     style A fill:#e3f2fd,stroke:#1565c0,color:#0d47a1
     style B fill:#f5f5f5,stroke:#616161,color:#212121
@@ -92,11 +92,11 @@ flowchart TD
 ```mermaid
 flowchart TD
     A["query(prompt, options)"] --> B["SDK sends prompt & tool definitions to Claude"]
-    B --> C{"Claude response contains tool_use block?"}
-    C -->|"Yes"| D["SDK executes requested tool locally"]
-    D --> E["SDK appends tool_result to message history"]
+    B --> C{"Claude response contains\ntool_use block?"}
+    C -->|"Yes"| D["SDK executes requested\ntool locally"]
+    D --> E["SDK appends tool_result\nto message history"]
     E --> B
-    C -->|"No — text response"| F["SDK yields ResultMessage with final output"]
+    C -->|"No — text response"| F["SDK yields ResultMessage\nwith final output"]
 
     style A fill:#e3f2fd,stroke:#1565c0,color:#0d47a1
     style B fill:#f5f5f5,stroke:#616161,color:#212121
@@ -109,14 +109,29 @@ flowchart TD
 The execution loop operates in five distinct phases:
 
 1. **Initialization (`query`)** — You invoke `query()` passing the user prompt and `ClaudeAgentOptions`. The SDK yields a `SystemMessage` with subtype `"init"` containing session metadata.
-2. **Prompt Evaluation** — The SDK formats conversation history, system instructions, and tool schemas, sending them to Claude. Claude evaluates the context to determine the next action.
-3. **Tool Dispatch (`tool_use`)** — If Claude requests tool execution via a `tool_use` block, the SDK validates permissions against `allowed_tools` and executes the function on the local system.
-4. **Observation (`tool_result`)** — The SDK serializes the tool output into a `tool_result` structure, appends it as a user message to history, and immediately initiates the next turn.
-5. **Termination & Output** — Steps 2–4 repeat until Claude returns a response without tool calls or hits a turn/budget boundary. The SDK yields an `AssistantMessage` followed by a final `ResultMessage`.
+2. **Prompt Evaluation** — The SDK formats conversation history, system instructions, and tool definitions, sending them to Claude. Claude evaluates the context to determine the next action.
+3. **Tool Execution (`tool_use`)** — If Claude requests tool execution via a `tool_use` block, the SDK validates permissions against `allowed_tools` and executes the function on your local filesystem.
+4. **Observation (`tool_result`)** — The SDK serializes the tool result into a `tool_result` block, appends it to conversation history, and immediately triggers the next turn.
+5. **Termination & Output** — Steps 2–4 repeat until Claude produces a response without tool calls or reaches a turn/budget limit. The SDK yields an `AssistantMessage` followed by a final `ResultMessage`.
 
 > [!NOTE]
 > ### Under the hood
 > Each cycle of tool invocation and observation constitutes one **turn**. When multiple read-only tools are requested in a single turn (such as reading two independent files), the SDK executes them concurrently. State-modifying operations are executed sequentially to prevent race conditions.
+
+---
+
+# Output
+
+A structured markdown summary detailing all discovered code annotations, grouped by file path, including line numbers and surrounding context:
+
+> ## TODO / FIXME Audit Report
+>
+> ### src/utils.py
+> - **Line 42**: `TODO: Refactor string parsing logic into dedicated utility module`
+> - **Line 87**: `FIXME: Handle potential NoneType return when cache lookup fails`
+>
+> ### src/api/client.py
+> - **Line 15**: `TODO: Implement exponential backoff strategy for network retry loop`
 
 ---
 
@@ -127,7 +142,7 @@ The execution loop operates in five distinct phases:
 | **Agent SDK** | Anthropic Agent SDK (`claude_agent_sdk`) | Manages turn execution, state history, and local tool dispatch |
 | **Foundation Model** | Claude 3.5 Sonnet / Claude 3.7 Sonnet | Evaluates context, determines task trajectory, and generates reports |
 | **Built-in Tools** | `Read`, `Glob`, `Grep` | Native filesystem tools for reading content and pattern matching |
-| **Runtime** | Python 3.10+ | Asynchronous execution environment (`asyncio`) |
+| **Runtime & Tooling** | Python 3.10+ & `uv` | Asynchronous runtime (`asyncio`) and fast package management (`uv`) |
 | **Authentication** | `ANTHROPIC_API_KEY` | Environment variable for API request authorization |
 
 ---
@@ -138,14 +153,14 @@ The execution loop operates in five distinct phases:
 
 | Dimension | Standard Client SDK (`anthropic`) | Agent SDK (`claude_agent_sdk`) |
 |-----------|----------------------------------|--------------------------------|
-| **Loop Control** | Manual — developer writes the request-response control loop | Automatic — `query()` orchestrates multi-turn cycles internally |
+| **Loop Control** | Manual — developer writes the request-response loop | Automatic — `query()` orchestrates multi-turn cycles internally |
 | **State Management** | Manual — caller appends assistant messages and tool results | Automatic — SDK maintains context history and auto-compacts |
 | **Tool Execution** | External — caller receives schema request and executes code | Local — SDK dispatches built-in and custom tools locally |
 | **Primary Use Case** | Single-turn generations, strict custom pipelines | Autonomous multi-step workflows, agentic coding tasks |
 
-When using the **Client SDK**, tool execution requires explicit loop management. When Claude returns a `tool_use` block, the application must intercept the block, call the corresponding local function, wrap the output in a `tool_result` message, append both messages to the request array, and invoke `messages.create()` again. This architecture grants absolute low-level control but introduces significant boilerplate.
+When using the **Client SDK**, tool execution requires explicit loop management. When Claude returns a `tool_use` block, your code must parse the request, call the local function, format a `tool_result` message, append both messages to the request array, and invoke `messages.create()` again. This grants granular control but requires significant boilerplate.
 
-When using the **Agent SDK**, calling `query()` delegates loop orchestration to the framework. You configure permitted capabilities using `ClaudeAgentOptions`, and the engine handles tool execution, context formatting, and iteration limits automatically.
+When using the **Agent SDK**, calling `query()` delegates loop orchestration to the framework. You configure permitted capabilities via `ClaudeAgentOptions`, and the engine handles tool execution, context formatting, and iteration limits automatically.
 
 > [!NOTE]
 > ### Common misconception
@@ -183,6 +198,7 @@ options = ClaudeAgentOptions(
 # Pre-requisites
 
 - **Python 3.10+** installed in your development environment
+- **`uv` package manager** (optional, recommended for ultra-fast dependency resolution)
 - **Anthropic API Key** — available from [console.anthropic.com](https://console.anthropic.com)
 - **Local codebase** — directory containing source files to explore
 - **Core Python knowledge** — familiarity with `asyncio` and async generators
@@ -191,16 +207,18 @@ options = ClaudeAgentOptions(
 
 # Environment / Dependencies Setup
 
-Install required dependencies:
+Install required dependencies using `uv` (recommended) or `pip`:
 
 | Package | Purpose |
 |---------|---------|
+| `uv` | Fast Python package manager and environment resolver |
 | `claude-agent-sdk` | Anthropic Agent SDK framework |
 | `rich` | Terminal text formatting and markdown rendering |
 | `python-dotenv` | Loads environment variables from `.env` files |
 
 ```python
-!pip install -q claude-agent-sdk rich python-dotenv
+# Install dependencies using uv (or fallback to standard pip)
+!uv pip install -q claude-agent-sdk rich python-dotenv || pip install -q claude-agent-sdk rich python-dotenv
 ```
 
 ## Import Libraries
