@@ -120,21 +120,6 @@ The execution loop operates in five distinct phases:
 
 ---
 
-# Output
-
-A structured markdown summary detailing all discovered code annotations, grouped by file path, including line numbers and surrounding context:
-
-> ## TODO / FIXME Audit Report
->
-> ### src/utils.py
-> - **Line 42**: `TODO: Refactor string parsing logic into dedicated utility module`
-> - **Line 87**: `FIXME: Handle potential NoneType return when cache lookup fails`
->
-> ### src/api/client.py
-> - **Line 15**: `TODO: Implement exponential backoff strategy for network retry loop`
-
----
-
 # Tech Stack
 
 | Component | Implementation | Role |
