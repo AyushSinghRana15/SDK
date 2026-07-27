@@ -179,35 +179,35 @@ The cell below installs all required Python packages:
 
 | Package | Purpose |
 |---------|---------|
-| `anthropic` | **Anthropic SDK** — core API client for Claude |
-| `agent` | **Agent SDK** — orchestrates the autonomous tool-use loop |
+| `claude-agent-sdk` | **Agent SDK** — orchestrates the autonomous tool-use loop |
 | `rich` | **Terminal formatting** — pretty-prints agent output and tool calls |
 
 > **Note:** Run this cell first — it only needs to be run once per session.
 
 ```python
-!pip install -q anthropic agent rich
+!pip install -q claude-agent-sdk rich python-dotenv
 ```
 
 ## Import Libraries
 
-Import the standard library and third-party modules used throughout the notebook. **`os`** handles environment variables. **`agent`** provides the `Agent` class and built-in tools. **`rich`** provides pretty-printing for terminal output.
+Import the standard library and third-party modules used throughout the notebook. **`os`** handles environment variables. **`claude_agent_sdk`** provides the `query()` function and `ClaudeAgentOptions` for configuring the agent. **`rich`** provides pretty-printing for terminal output.
 
 ```python
 import os
-from agent import Agent, Read, Glob, Grep
+from claude_agent_sdk import query, ClaudeAgentOptions
 from rich.console import Console
 from rich.markdown import Markdown
 ```
 
 ## Configure Anthropic API Key
 
-Set your Anthropic API key as an environment variable. Copy the key from the key icon on your lab platform or from [console.anthropic.com](https://console.anthropic.com).
+Set your API key as an environment variable. The SDK reads `ANTHROPIC_API_KEY` (or `OPENROUTER_API_KEY` for OpenRouter) from the environment. Load it from a `.env` file so secrets never touch the notebook.
 
 ```python
-os.environ["ANTHROPIC_API_KEY"] = "YOUR_API_KEY"
+load_dotenv()
 
-print("API key configured.")
+API_KEY = os.getenv("ANTHROPIC_API_KEY") or os.getenv("OPENROUTER_API_KEY")
+print(f"API key loaded: {'Yes' if API_KEY else 'No'}")
 ```
 
 ---
@@ -220,29 +220,22 @@ print("API key configured.")
 
 Create an agent instance with a system prompt and the three built-in tools. The system prompt defines the agent's role and behavior. The tools list restricts what the agent can do.
 
-#### Create the Agent
+#### Configure the Agent
 
-This cell creates an `Agent` with:
-- **Model**: `claude-sonnet-4-20250514` — Claude's latest Sonnet model
-- **System prompt**: Defines the agent as a code exploration assistant
-- **Tools**: `Read()`, `Glob()`, `Grep()` — the three filesystem exploration tools
+This cell creates a `ClaudeAgentOptions` with:
+- **allowed_tools**: `["Read", "Glob", "Grep"]` — the three filesystem exploration tools
 
 ```python
-agent = Agent(
-    model="claude-sonnet-4-20250514",
-    system_prompt=(
-        "You are a code exploration assistant. "
-        "Your job is to scan codebases, find specific patterns or comments, "
-        "and produce structured markdown reports. "
-        "Be thorough but concise. Always cite file paths and line numbers."
-    ),
-    tools=[Read(), Glob(), Grep()],
+TARGET_DIR = "data"  # Fixture codebase shipped with this lab
+
+options = ClaudeAgentOptions(
+    # Only these three tools are available to the agent at runtime.
+    allowed_tools=["Read", "Glob", "Grep"],
 )
 
 console = Console()
-console.print("[bold green]Agent initialized.[/bold green]")
-console.print(f"Model: {agent.model}")
-console.print(f"Tools: {[t.__class__.__name__ for t in agent.tools]}")
+console.print("[bold green]Agent configured.[/bold green]")
+console.print(f"Allowed tools: {options.allowed_tools}")
 ```
 
 ---
