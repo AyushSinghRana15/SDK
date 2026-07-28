@@ -1,10 +1,11 @@
 # Module 1: Agent Loop Notebook
 
 `module1_agent_loop.ipynb` demonstrates a basic Claude Agent SDK workflow for auditing a local codebase.
+The code is now separated into `notebooks/module1_agent_loop.py`, and this document keeps the markdown walkthrough.
 
 The notebook:
 
-- creates a small sample `data/` codebase containing TODO and FIXME comments;
+- operates on the committed `data/` codebase containing TODO and FIXME comments;
 - loads `ANTHROPIC_API_KEY` from `.env`;
 - configures an agent with read-only `Read`, `Glob`, and `Grep` tools;
 - asks the agent to find TODO/FIXME comments and summarize them by file and line number; and
