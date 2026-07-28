@@ -549,15 +549,22 @@ Score each criterion 1-5 and give an overall score. Be strict.
 """
 
 # Single API call to the free model — no tools, just text generation
-judge_response = judge_client.chat.completions.create(
-    model=JUDGE_MODEL,
-    messages=[{"role": "user", "content": judge_prompt}],
-)
-
-judge_content = judge_response.choices[0].message.content
-
-print("\\n--- LLM Judge Evaluation ---\\n")
-print(judge_content if judge_content else "(No response from judge)")
+try:
+    judge_response = judge_client.chat.completions.create(
+        model=JUDGE_MODEL,
+        messages=[{"role": "user", "content": judge_prompt}],
+    )
+    
+    if judge_response.choices and judge_response.choices[0].message:
+        judge_content = judge_response.choices[0].message.content
+        print("\\n--- LLM Judge Evaluation ---\\n")
+        print(judge_content if judge_content else "(Empty response from judge)")
+    else:
+        print("\\n--- LLM Judge Error ---")
+        print(f"Response: {judge_response}")
+except Exception as e:
+    print(f"\\n--- LLM Judge Error ---")
+    print(f"Error: {e}")
 ```
 
 The judge checks:
