@@ -296,7 +296,6 @@ Import the standard library and third-party modules used throughout the notebook
 
 ```python
 import os
-import asyncio
 from dotenv import load_dotenv
 from claude_agent_sdk import query, ClaudeAgentOptions
 ```
@@ -452,8 +451,6 @@ flowchart LR
 ```python
 # Execute the agent loop
 # The SDK handles: task → Claude reasons → tool calls → observe → iterate
-import asyncio
-
 async def run_agent():
     result = ""
     async for message in query(
@@ -464,7 +461,8 @@ async def run_agent():
             result = message.content
     return result
 
-response = asyncio.run(run_agent())
+# Use await in Jupyter (already has event loop)
+response = await run_agent()
 
 print("\\n--- Agent Response ---\\n")
 print(response)
