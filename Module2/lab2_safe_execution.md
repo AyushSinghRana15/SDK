@@ -282,12 +282,12 @@ The cell below installs all required Python packages:
 | Package | Purpose |
 |---------|---------|
 | `claude-agent-sdk` | **Agent SDK** — orchestrates the autonomous tool-use loop with permission controls |
-| `rich` | **Terminal formatting** — pretty-prints agent output and tool calls |
+| `python-dotenv` | **Environment** — loads API keys from .env file |
 
 > **Note:** Run this cell first — it only needs to be run once per session.
 
 ```python
-!pip install -q claude-agent-sdk rich python-dotenv
+!pip install -q claude-agent-sdk python-dotenv
 ```
 
 ## Import Libraries
@@ -296,11 +296,9 @@ Import the standard library and third-party modules used throughout the notebook
 
 ```python
 import os
+import asyncio
 from dotenv import load_dotenv
 from claude_agent_sdk import query, ClaudeAgentOptions
-from rich.console import Console
-from rich.markdown import Markdown
-from rich.table import Table
 ```
 
 ## Configure API Keys
@@ -361,9 +359,8 @@ options = ClaudeAgentOptions(
     allowed_tools=["Bash", "Edit", "AskUserQuestion"],
 )
 
-console = Console()
-console.print("[bold green]Agent configured.[/bold green]")
-console.print(f\"Allowed tools: {options.allowed_tools}\")
+print("Agent configured.")
+print(f"Allowed tools: {options.allowed_tools}")
 ```
 
 ---
@@ -455,10 +452,22 @@ flowchart LR
 ```python
 # Execute the agent loop
 # The SDK handles: task → Claude reasons → tool calls → observe → iterate
-response = query(TASK, options=options)
+import asyncio
 
-console.print("\n[bold cyan]--- Agent Response ---[/bold cyan]\n")
-console.print(Markdown(response))
+async def run_agent():
+    result = ""
+    async for message in query(
+        prompt=TASK,
+        options=options
+    ):
+        if hasattr(message, 'content'):
+            result = message.content
+    return result
+
+response = asyncio.run(run_agent())
+
+print("\\n--- Agent Response ---\\n")
+print(response)
 ```
 
 ---
@@ -473,24 +482,15 @@ Monitor Anthropic API token usage to track costs and optimize prompts. The SDK r
 usage = getattr(response, 'usage', None)
 
 if usage:
-    table = Table(title="Anthropic API Token Usage")
-    table.add_column("Metric", style="cyan")
-    table.add_column("Value", style="green")
-    
-    table.add_row("Input tokens", str(getattr(usage, 'input_tokens', 0)))
-    table.add_row("Output tokens", str(getattr(usage, 'output_tokens', 0)))
-    
-    cache_creation = getattr(usage, 'cache_creation_input_tokens', 0) or 0
-    cache_read = getattr(usage, 'cache_read_input_tokens', 0) or 0
-    table.add_row("Cache creation tokens", str(cache_creation))
-    table.add_row("Cache read tokens", str(cache_read))
-    
+    print("\\n--- Anthropic API Token Usage ---")
+    print(f"Input tokens: {getattr(usage, 'input_tokens', 0)}")
+    print(f"Output tokens: {getattr(usage, 'output_tokens', 0)}")
+    print(f"Cache creation tokens: {getattr(usage, 'cache_creation_input_tokens', 0) or 0}")
+    print(f"Cache read tokens: {getattr(usage, 'cache_read_input_tokens', 0) or 0}")
     total = (getattr(usage, 'input_tokens', 0) or 0) + (getattr(usage, 'output_tokens', 0) or 0)
-    table.add_row("Total tokens", str(total))
-    
-    console.print(table)
+    print(f"Total tokens: {total}")
 else:
-    console.print("[yellow]No usage data available in response.[/yellow]")
+    print("No usage data available in response.")
 ```
 
 **Token metrics explained:**
@@ -511,8 +511,8 @@ from pathlib import Path
 
 req_file = Path(TARGET_DIR) / "requirements.txt"
 if req_file.exists():
-    console.print("[bold]Current requirements.txt:[/bold]")
-    console.print(req_file.read_text())
+    print("\\n--- Current requirements.txt ---")
+    print(req_file.read_text())
 ```
 
 ---
@@ -558,8 +558,8 @@ judge_response = judge_client.chat.completions.create(
 
 judge_content = judge_response.choices[0].message.content
 
-console.print("\n[bold cyan]--- LLM Judge Evaluation ---[/bold cyan]\n")
-console.print(judge_content if judge_content else "(No response from judge)")
+print("\\n--- LLM Judge Evaluation ---\\n")
+print(judge_content if judge_content else "(No response from judge)")
 ```
 
 The judge checks:
