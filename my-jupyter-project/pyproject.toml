@@ -1,0 +1,13 @@
+[project]
+name = "my-jupyter-project"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "claude-agent-sdk>=0.2.128",
+    "notebook>=7.6.1",
+    "python-dotenv>=1.2.2",
+    "pywin32>=312",
+    "rich>=15.0.0",
+]

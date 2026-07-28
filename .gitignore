@@ -1,0 +1,8 @@
+.env
+.venv/
+**/.venv/
+.ipynb_checkpoints/
+__pycache__/
+todo_fixme_report.md
+final_code_audit.md
+labs-doc/one.md
