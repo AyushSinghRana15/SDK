@@ -367,7 +367,7 @@ The `HookMatcher` uses:
 ```python
     options = ClaudeAgentOptions(
         allowed_tools=["Bash", "Edit", "Write"],
-        permission_mode="bypass",
+        permission_mode="bypassPermissions",
         model="claude-haiku-4-5-20251001",
         hooks={
             "PostToolUse": [

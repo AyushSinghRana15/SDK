@@ -217,7 +217,7 @@ from claude_agent_sdk import query, ClaudeAgentOptions
 
 options = ClaudeAgentOptions(
     allowed_tools=["Bash", "Edit", "Write", "AskUserQuestion"],
-    permission_mode="bypass",
+    permission_mode="bypassPermissions",
     model="claude-haiku-4-5-20251001",
 )
 
@@ -360,7 +360,7 @@ The Agent SDK automatically handles:
 options = ClaudeAgentOptions(
     # Execution tools available to the agent at runtime.
     allowed_tools=["Bash", "Edit", "Write", "AskUserQuestion"],
-    permission_mode="bypass",  # prompts for human approval on destructive actions
+    permission_mode="bypassPermissions",  # auto-approves all actions
 )
 
 print("Agent configured.")

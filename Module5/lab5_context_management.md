@@ -316,7 +316,7 @@ async def run_writer(findings: str, template_path: str, output_path: str) -> str
     """Write findings into the report template using Edit tool only."""
     options = ClaudeAgentOptions(
         allowed_tools=["Read", "Edit"],
-        permission_mode="bypass",
+        permission_mode="bypassPermissions",
         model="claude-haiku-4-5-20251001",
     )
     prompt = f"""Read the template at {template_path}, then write a completed
