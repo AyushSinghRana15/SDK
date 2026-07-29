@@ -36,7 +36,7 @@ use AskUserQuestion to clarify with the human before proceeding.
 
 options = ClaudeAgentOptions(
     allowed_tools=["Bash", "Edit", "Write", "AskUserQuestion"],
-    permission_mode="default",
+    permission_mode="bypass",
     model="claude-haiku-4-5-20251001",
 )
 
