@@ -1,7 +1,17 @@
 import os
 import asyncio
+import platform
+import anyio
 from dotenv import load_dotenv
 from claude_agent_sdk import query, ClaudeAgentOptions
+
+if platform.system() == "Windows":
+    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+    _original_open_process = anyio.open_process
+    async def _patched_open_process(*args, **kwargs):
+        kwargs.pop("user", None)
+        return await _original_open_process(*args, **kwargs)
+    anyio.open_process = _patched_open_process
 
 load_dotenv()
 
