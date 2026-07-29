@@ -1,6 +1,8 @@
 # Module 2: Safe Execution & Human-in-the-Loop
 
-> **Giving an agent write access or bash capabilities requires strict guardrails.** Without proper permission controls, an autonomous agent could accidentally delete files, overwrite code, or execute dangerous commands. This module teaches you how to implement execution tools safely with human approval gates.
+In Module 1, you built an agent that could read your codebase, search files, and answer questions — all with read-only tools. It was safe by design: the agent could look but never touch.
+
+Module 2 flips the script. Now your agent has Bash (run any shell command), Edit (modify files), and Write (create new files). Suddenly the agent isn't just an observer — it's an operator. It can rm -rf a directory, overwrite your config, or install packages that break your environment. The question Module 2 answers is: how do you give an agent power without giving it free rein to cause damage?
 
 ---
 
@@ -141,7 +143,7 @@ When the agent is uncertain about a decision, it can use `AskUserQuestion` to pr
 # Human responds with a choice from the provided options
 response = agent.query(
     task="Update the outdated dependency",
-    tools=[Bash(), Edit(), AskUserQuestion()]
+    tools=[Bash(), Edit(), Write(), AskUserQuestion()]
 )
 ```
 
@@ -214,7 +216,8 @@ The Agent SDK provides built-in permission controls for execution tools. When yo
 from claude_agent_sdk import query, ClaudeAgentOptions
 
 options = ClaudeAgentOptions(
-    allowed_tools=["Bash", "Edit", "AskUserQuestion"],
+    allowed_tools=["Bash", "Edit", "Write", "AskUserQuestion"],
+    permission_mode="default",  # prompts for human approval on destructive actions
 )
 
 # The SDK handles permission checks automatically
@@ -343,7 +346,7 @@ Create an agent instance with a system prompt and execution tools. The system pr
 #### Configure the Agent
 
 This cell creates a `ClaudeAgentOptions` with:
-- **allowed_tools**: `["Bash", "Edit", "AskUserQuestion"]` — execution and safety tools
+- **allowed_tools**: `["Bash", "Edit", "Write", "AskUserQuestion"]` — execution and safety tools
 
 The Agent SDK automatically handles:
 - The tool-use loop (sending tasks, executing tools, re-prompting)
@@ -355,7 +358,8 @@ The Agent SDK automatically handles:
 # The SDK automatically handles the tool-use loop with Claude
 options = ClaudeAgentOptions(
     # Execution tools available to the agent at runtime.
-    allowed_tools=["Bash", "Edit", "AskUserQuestion"],
+    allowed_tools=["Bash", "Edit", "Write", "AskUserQuestion"],
+    permission_mode="default",  # prompts for human approval on destructive actions
 )
 
 print("Agent configured.")
