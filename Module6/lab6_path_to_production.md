@@ -234,6 +234,21 @@ The cell below installs all required Python packages:
 
 ## Import Libraries
 
+Import the standard library and SDK modules needed for session recovery:
+
+| Import | Purpose |
+|--------|---------|
+| `os` | Read environment variables (`ANTHROPIC_API_KEY`) |
+| `json` | Parse session transcripts and task data files |
+| `asyncio` | Async runtime for the agent query loop |
+| `Path` | Cross-platform file path handling for data files |
+| `load_dotenv` | Load `.env` file into environment variables |
+| `query` | SDK function — sends a prompt and yields streaming messages |
+| `ClaudeAgentOptions` | Configures tools, model, permissions, and session options |
+| `ResultMessage` | Message type that carries `session_id` and final results |
+| `get_session_messages` | Reads full conversation history from a session transcript |
+| `list_sessions` | Lists all session transcripts in the current project |
+
 ```python
 import os
 import json
@@ -249,9 +264,17 @@ from claude_agent_sdk import (
 
 ## Configure API Keys
 
+The SDK authenticates via the `ANTHROPIC_API_KEY` environment variable. Create a `.env` file in your project root:
+
+```
+ANTHROPIC_API_KEY=sk-ant-...
+```
+
 | Key | Used By | Purpose |
 |-----|---------|---------|
-| `ANTHROPIC_API_KEY` | Agent SDK | Claude model for all agents |
+| `ANTHROPIC_API_KEY` | Agent SDK | Authenticates all query calls to Claude |
+
+The cell below loads the key and verifies it is present:
 
 ```python
 load_dotenv()
@@ -261,6 +284,13 @@ ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 print(f"Anthropic key (SDK): {'Yes' if ANTHROPIC_API_KEY else 'No'}")
 ```
 
+**Expected output:**
+```
+Anthropic key (SDK): Yes
+```
+
+If you see `No`, create a `.env` file with your key and re-run this cell.
+
 ---
 
 # Step-wise Instructions — Development
@@ -269,7 +299,24 @@ print(f"Anthropic key (SDK): {'Yes' if ANTHROPIC_API_KEY else 'No'}")
 
 ### Step 1 — Run an Agent with a Turn Limit
 
-Run an agent with `max_turns=2` so it terminates early, simulating a crash. Capture the `session_id` from the `ResultMessage`.
+This step simulates a crash by configuring the agent with `max_turns=2`. The agent will start working on the task but will be forcibly interrupted when it reaches the turn limit — exactly what would happen in production if a task exceeds a timeout or a process is killed.
+
+#### Configure the Agent with a Turn Limit
+
+This cell creates a `ClaudeAgentOptions` with:
+- **allowed_tools**: `["Read", "Glob", "Grep", "Edit"]` — read and write tools for a refactoring task
+- **max_turns**: `2` — the agent stops after two tool-use cycles, simulating a crash
+- **model**: `claude-haiku-4-5-20251001`
+
+The key insight is the `session_id` extraction:
+
+| Object | Field | What it Contains |
+|--------|-------|------------------|
+| `ResultMessage` | `session_id` | UUID string uniquely identifying this session |
+| `ResultMessage` | `subtype` | `"success"` if the task completed, `"error"` otherwise |
+| `ResultMessage` | `result` | The agent's final output text |
+
+The `try/except` block catches any exceptions (turn limit reached, network errors, etc.) and prints a crash message without losing the `session_id`.
 
 ```python
 async def run_with_crash(task: str, session_store=None):
@@ -293,11 +340,30 @@ async def run_with_crash(task: str, session_store=None):
     return session_id
 ```
 
+**What happens when this runs:**
+1. The agent starts working on the task (reads files, searches for code)
+2. After 2 turns, the SDK raises an exception — the turn limit is reached
+3. The `except` block catches it and prints `[Crash] ...`
+4. The `session_id` is returned — this is the key to recovering the work
+
 ---
 
 ### Step 2 — Inspect the Session History
 
-Use `get_session_messages()` to inspect what the agent did before the crash.
+After the simulated crash, the session transcript exists on disk but you no longer have access to it through the live agent. `get_session_messages()` reconstructs the full message chain from the session file without running any agent — it is a **read-only inspection**.
+
+#### Reading Session Messages
+
+| Function | What It Returns | When To Use |
+|----------|----------------|-------------|
+| `get_session_messages(id)` | List of `SessionMessage` objects | Inspecting a known session ID |
+| `get_session_info(id)` | Metadata dict (model, timestamps) | Quick check before loading full messages |
+| `list_sessions()` | List of session summaries | Finding sessions when you do not have the ID |
+
+Each `SessionMessage` has:
+- **`type`** — `"user"` or `"assistant"` indicating who sent the message
+- **`message`** — The actual conversation content (prompts, responses, tool calls)
+- **`uuid`** — Stable identifier for deduplication
 
 ```python
 def inspect_session(session_id: str):
@@ -311,11 +377,32 @@ def inspect_session(session_id: str):
     return messages
 ```
 
+**Expected output (example):**
+```
+--- Session ses_abc1... (4 messages) ---
+  [0] USER: Read data/task_state.json and data/work_in_progress.txt...
+  [1] ASSISTANT: {'role': 'assistant', 'content': [{'type': 'tool_use', 'name': 'Glob'...
+  [2] USER: {'role': 'user', 'content': [{'type': 'tool_result', 'content': ['task_state.json']...
+  [3] ASSISTANT: {'role': 'assistant', 'content': [{'type': 'tool_use', 'name': 'Read'...
+```
+
+This shows exactly what the agent was doing when it crashed — which files it had read, what it was planning to do next.
+
 ---
 
 ### Step 3 — Resume the Crashed Session
 
-Resume the session using the captured `session_id`. The agent loads the full history and continues from the last state.
+This is the heart of the crash recovery pattern. Instead of starting a new session from scratch (which would re-read files and re-do work), we use `resume=<session_id>` to load the full history and continue exactly where the agent left off.
+
+#### How Resumption Works
+
+| Option | Value | Effect |
+|--------|-------|--------|
+| `resume` | `session_id` | Loads the session transcript and prepends it to the new query's context |
+| `allowed_tools` | `["Read", "Glob", "Grep", "Edit"]` | Same tools as the original run |
+| `model` | `claude-haiku-4-5-20251001` | Uses the same model for consistency |
+
+The `follow_up` prompt is typically a simple instruction like `"Continue exactly where you left off."` — the agent already has full context from the previous session, so it does not need the original task repeated.
 
 ```python
 async def resume_session(session_id: str, follow_up: str):
@@ -330,11 +417,28 @@ async def resume_session(session_id: str, follow_up: str):
             print(f"[Resumed] {message.result[:300]}")
 ```
 
+**What happens when this runs:**
+1. The SDK loads the session transcript from `~/.claude/projects/<encoded-cwd>/`
+2. It prepends all previous messages (user prompts, assistant responses, tool calls, tool results) into the context window
+3. The new `follow_up` prompt is appended as the latest user message
+4. The agent sees everything from before the crash plus the new instruction
+5. It continues working — reading the next file, making the next edit, etc.
+
 ---
 
 ### Step 4 — Run the Full Recovery Pipeline
 
-Execute the complete crash-and-recover flow end-to-end.
+This cell ties everything together — it runs the crash, inspects the session, and resumes from where it stopped. The entire flow is wrapped in a single async `main()` function.
+
+#### Pipeline Flow
+
+| Phase | Function | What Happens |
+|-------|----------|-------------|
+| 1. Crash | `run_with_crash(TASK)` | Agent starts work, hits `max_turns=2`, returns `session_id` |
+| 2. Inspect | `inspect_session(session_id)` | Reads the transcript — shows what the agent did before crashing |
+| 3. Resume | `resume_session(session_id, FOLLOW_UP)` | Agent loads full history and continues working |
+
+The `TASK` prompts the agent to read two data files and continue the refactoring work they describe. The `FOLLOW_UP` is deliberately minimal — just `"Continue exactly where you left off."` — because the session transcript already has all the context.
 
 ```python
 TASK = "Read data/task_state.json and data/work_in_progress.txt, then continue the refactoring work described."
@@ -349,17 +453,50 @@ async def main():
 await main()
 ```
 
+**Expected output (example):**
+```
+[Crash] Turn limit reached (max_turns=2)
+
+--- Session ses_abc1... (5 messages) ---
+  [0] USER: Read data/task_state.json and...
+  [1] ASSISTANT: Glob tool call...
+  [2] USER: Tool result...
+  [3] ASSISTANT: Read tool call...
+  [4] USER: Tool result...
+
+[Resumed] Successfully completed the refactoring task. Updated 3 files...
+```
+
+The output confirms that the agent picked up exactly where it stopped — it did not re-read files it had already read in the first session.
+
 ---
 
 ### Step 5 — List Available Sessions
 
-Use `list_sessions()` to see all sessions stored on disk.
+`list_sessions()` scans the local session store (`~/.claude/projects/<encoded-cwd>/`) and returns summaries of every session. This is useful for finding a session ID when you did not capture it at runtime — for example, after a full process crash.
+
+#### Session List Entry Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `session_id` | `str` | UUID — use with `resume=` or `get_session_messages()` |
+| `first_prompt` | `str` | First 60 chars of the initial user prompt |
+| `created_at` | `str` | ISO 8601 timestamp of when the session was created |
+| `message_count` | `int` | Number of messages in the session (on `SessionStoreListEntry`) |
+
+Sessions persist on disk indefinitely. Use `delete_session(id)` to clean up old ones.
 
 ```python
 sessions = list_sessions()
 print(f"\n--- All Sessions ({len(sessions)}) ---")
 for s in sessions:
     print(f"  {s.session_id[:12]}... | {s.first_prompt[:60]} | {s.created_at}")
+```
+
+**Expected output:**
+```
+--- All Sessions (1) ---
+  ses_abc123def... | Read data/task_state.json and data/work_in_progress.txt... | 2026-07-29T04:30:00
 ```
 
 ---

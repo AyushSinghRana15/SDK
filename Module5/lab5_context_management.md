@@ -252,7 +252,17 @@ The cell below installs all required Python packages:
 
 ## Import Libraries
 
-Import the standard library and SDK modules. **`os`** handles environment variables. **`json`** structures sub-agent communication. **`claude_agent_sdk`** provides `query`, `ClaudeAgentOptions`, and hook infrastructure.
+Import the standard library and SDK modules needed for this lab:
+
+| Import | Purpose |
+|--------|---------|
+| `os` | Read environment variables (`ANTHROPIC_API_KEY`) |
+| `json` | Pass structured data between sub-agents |
+| `asyncio` | Async runtime for concurrent sub-agent execution |
+| `load_dotenv` | Load `.env` file into environment variables |
+| `query` | SDK function — sends a prompt and yields streaming messages |
+| `ClaudeAgentOptions` | Configures tools, model, permissions, and hooks for a sub-agent |
+| `HookMatcher` | Routes hook events to callbacks (used in Step 6 for compaction) |
 
 ```python
 import os
@@ -264,9 +274,17 @@ from claude_agent_sdk import query, ClaudeAgentOptions, HookMatcher
 
 ## Configure API Keys
 
+The SDK authenticates via the `ANTHROPIC_API_KEY` environment variable. Create a `.env` file in your project root:
+
+```
+ANTHROPIC_API_KEY=sk-ant-...
+```
+
 | Key | Used By | Purpose |
 |-----|---------|---------|
-| `ANTHROPIC_API_KEY` | Agent SDK | Claude model for all agents |
+| `ANTHROPIC_API_KEY` | Agent SDK | Authenticates all sub-agent calls to Claude |
+
+The cell below loads the key and verifies it is present:
 
 ```python
 load_dotenv()
@@ -276,6 +294,13 @@ ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 print(f"Anthropic key (SDK): {'Yes' if ANTHROPIC_API_KEY else 'No'}")
 ```
 
+**Expected output:**
+```
+Anthropic key (SDK): Yes
+```
+
+If you see `No`, create a `.env` file with your key and re-run this cell.
+
 ---
 
 # Step-wise Instructions — Development
@@ -284,7 +309,20 @@ print(f"Anthropic key (SDK): {'Yes' if ANTHROPIC_API_KEY else 'No'}")
 
 ### Step 1 — Define the Researcher Sub-agent
 
-Create a sub-agent that only has `WebSearch` and `WebFetch` tools. Its job is to gather information on a given topic and return concise findings. The researcher has no write access — it can only observe the web.
+Create the first specialized sub-agent. The Researcher only has web-browsing tools — it can search the internet and fetch pages, but it **cannot** modify any files on disk. This is the foundation of the principle of least privilege: each agent gets only the tools it absolutely needs.
+
+#### Configure the Researcher
+
+This cell creates a `ClaudeAgentOptions` with:
+- **allowed_tools**: `["WebSearch", "WebFetch"]` — read-only web access, no write capabilities
+- **model**: `claude-haiku-4-5-20251001` — fast, low-cost model ideal for focused research tasks
+
+The agent will receive a prompt that instructs it to:
+1. Call `WebSearch` to discover relevant pages on the topic
+2. Call `WebFetch` to read the full content of the most useful pages
+3. Return a bullet-point summary of key facts only
+
+This keeps the sub-agent's output small and focused — critical for efficient context handoff to the next agent.
 
 ```python
 async def run_researcher(topic: str) -> str:
@@ -305,11 +343,34 @@ Return a bullet-point summary of the most important facts only."""
     return result
 ```
 
+**Key points:**
+- The `query()` call starts a **fresh context window** — the Researcher has no memory of anything outside this prompt
+- Each `query()` yields streaming messages; the final `ResultMessage` contains the `.result` field with the agent's answer
+- The `hasattr` checks handle both intermediate `TextBlock` messages and the final `ResultMessage`
+- When this function returns, the Researcher's **entire context is discarded** — natural compaction at sub-agent boundaries
+
 ---
 
 ### Step 2 — Define the Writer Sub-agent
 
-Create a sub-agent that only has the `Edit` tool. Its job is to take the researcher's findings and write them into the report template. The writer has no web access — it can only modify files.
+Create the second specialized sub-agent. The Writer has the opposite toolset from the Researcher — it can **read and edit files**, but it has **no web access**. This isolation ensures the Writer cannot accidentally browse the internet; it must work only with the findings the Researcher gathered.
+
+#### Configure the Writer
+
+This cell creates a `ClaudeAgentOptions` with:
+- **allowed_tools**: `["Read", "Edit"]` — file read/write, no web capabilities
+- **permission_mode**: `"bypassPermissions"` — auto-approves file edits (no interactive prompts)
+- **model**: `claude-haiku-4-5-20251001`
+
+The prompt passes the Researcher's findings directly into the instructions via an f-string:
+
+| Variable | Source | Description |
+|----------|--------|-------------|
+| `template_path` | Coordinator parameter | Path to the template file with placeholders |
+| `output_path` | Coordinator parameter | Where to write the completed report |
+| `{findings}` | Researcher's return value | Bullet-point summary of research |
+
+The Writer is deliberately told to **not modify any other files** — this prevents it from accidentally altering anything outside the report.
 
 ```python
 async def run_writer(findings: str, template_path: str, output_path: str) -> str:
@@ -336,11 +397,32 @@ Do NOT modify any other files."""
     return result
 ```
 
+**What happens when this runs:**
+1. The Writer receives the prompt with findings inline
+2. It calls `Read` to load the template file
+3. It calls `Edit` to write the completed report to the output path
+4. Returns a confirmation message
+5. Its context is discarded — natural compaction at sub-agent boundary
+
 ---
 
 ### Step 3 — Define the Coordinator
 
-Create the top-level Coordinator that ties everything together. The Coordinator receives the user's task, spawns the Researcher, passes findings to the Writer, and returns the final result.
+The Coordinator is the orchestrator that ties the two sub-agents together. It does **no work itself** — it delegates everything to specialized sub-agents and only stitches the results together.
+
+#### Coordinator Flow
+
+Here is exactly what happens when the Coordinator runs:
+
+1. **Research phase** — The Coordinator calls `run_researcher(task)` which spawns a fresh sub-agent with web tools. The `await` keyword pauses the Coordinator until the Researcher finishes.
+2. **Handoff** — The Researcher returns a condensed string of findings. Its context is **discarded** (compaction). The Coordinator receives only the findings text — no raw web pages, no tool call history.
+3. **Write phase** — The Coordinator calls `run_writer(findings, template_path, output_path)`, passing only the condensed findings. A fresh sub-agent is spawned with file tools only.
+4. **Return** — The Writer returns the confirmation. The Coordinator prints the status and returns the report string.
+
+This pattern keeps each context window small:
+- Researcher context: ~15k tokens (web results + analysis)
+- Writer context: ~10k tokens (template + findings + edit operations)
+- Coordinator context: ~5k tokens (task + results only)
 
 ```python
 async def run_coordinator(task: str, template_path: str, output_path: str) -> str:
@@ -356,11 +438,23 @@ async def run_coordinator(task: str, template_path: str, output_path: str) -> st
     return report
 ```
 
+**Why this matters:** In a single-agent system, all web pages and edit diffs accumulate in one context window, quickly hitting the 200k limit. Here, each sub-agent's context is discarded after use — the Coordinator itself stays small and focused.
+
 ---
 
 ### Step 4 — Execute the Pipeline
 
-Set the target paths and run the full orchestration. The Coordinator manages context isolation automatically — each sub-agent gets its own fresh context window.
+Set the target paths and run the full orchestration. The `TEMPLATE_PATH` must point to an existing template file with placeholders. The `OUTPUT_PATH` will be created by the Writer.
+
+#### Configuration
+
+| Variable | Value | Description |
+|----------|-------|-------------|
+| `TEMPLATE_PATH` | `data/report_template.md` | Template with `[TOPIC]`, `[Summary]`, `[Key Findings]`, `[Implications]`, `[Sources]` placeholders |
+| `OUTPUT_PATH` | `data/completed_report.md` | Destination for the completed report |
+| `TASK` | `"Quantum Computing"` | The research topic passed to the Coordinator |
+
+The `await run_coordinator(...)` call starts the entire pipeline. Because `run_coordinator` is async, this works in a Jupyter notebook's event loop. The pipeline is **sequential** — research completes before writing begins.
 
 ```python
 TEMPLATE_PATH = "data/report_template.md"
@@ -372,11 +466,36 @@ print("\n--- Final Report ---\n")
 print(result)
 ```
 
+**Expected output (approximate):**
+```
+[Coordinator] Starting research phase...
+[Coordinator] Research complete. 2641 chars gathered.
+[Coordinator] Starting writing phase...
+[Coordinator] Report written.
+
+--- Final Report ---
+
+[TextBlock(text="Perfect! I've successfully created the completed report...")]
+```
+
+The report content will vary based on what the Researcher finds. The key metric is the number of chars gathered — if it is very small (< 10), the Researcher may not have called `WebSearch` successfully.
+
 ---
 
 ### Step 5 — Verify the Output
 
-Read the completed report to verify the Writer properly filled in the template.
+Read the completed report from disk to confirm the Writer properly filled in the template. This step runs locally — no SDK calls, no token usage.
+
+#### What to check in the output
+
+| Check | What to look for |
+|-------|-----------------|
+| **File exists** | `data/completed_report.md` was created |
+| **Placeholders replaced** | No `[TOPIC]`, `[Summary]`, etc. remaining |
+| **Research incorporated** | Real facts about the topic (dates, names, technologies) |
+| **Structure preserved** | Sections match the template (Summary, Key Findings, Implications, Sources) |
+
+If the file does not exist, the Writer may have been blocked by permissions or the template path was incorrect.
 
 ```python
 from pathlib import Path
@@ -389,13 +508,35 @@ else:
     print("Report not found.")
 ```
 
+**Expected output (truncated example):**
+```
+--- Completed Report ---
+# Research Report: Quantum Computing Breakthroughs and Market Emergence in 2026
+
+## Summary
+Quantum computing has reached a critical inflection point in 2026...
+```
+
 ---
 
 ### Step 6 — Observe Context Compaction with a `PreCompact` Hook
 
-The SDK auto-compacts the context window when token usage exceeds a threshold, summarizing older turns to free space. You can observe this with a `PreCompact` hook, which fires before auto-compaction occurs. Sub-agent handoffs are also natural compaction points — when a sub-agent returns, its entire context is discarded.
+The SDK **auto-compacts** the context window when token usage exceeds a threshold, summarizing older turns to free up space. This is transparent to you — the agent keeps working while older messages are condensed.
 
-This demo registers a `PreCompact` hook and runs a query that generates enough context to trigger auto-compaction.
+You can observe this happening by registering a `PreCompact` hook, which fires before auto-compaction runs. This step also reinforces that every sub-agent handoff in your pipeline is a **natural compaction point** — the sub-agent's context is discarded entirely on return.
+
+#### How the `PreCompact` Hook Works
+
+| Field | Value | Description |
+|-------|-------|-------------|
+| **Hook event** | `"PreCompact"` | Fires before auto-compaction summarizes older turns |
+| **Trigger** | `"auto"` or `"manual"` | What caused the compaction |
+| **Hook callback** | `async def (hook_input, tool_use_id, context)` | Receives the compaction context |
+| **Return** | `dict` (may be empty `{}`) | Hook output (not used by compaction logic) |
+
+#### The Demo
+
+This cell registers a `PreCompact` hook and runs a query that reads multiple files — enough content to potentially trigger auto-compaction. If the hook fires, you will see `Trigger: auto` logged to the console.
 
 ```python
 from claude_agent_sdk import HookMatcher
@@ -434,8 +575,9 @@ print("discards the sub-agent's context — that's natural compaction at work.")
 ```
 
 **What to observe:**
-- If the `PreCompact` hook fires, you'll see `Trigger: auto` with details on what was compacted.
-- Whether or not auto-compaction fires, each sub-agent in your pipeline discards its context on return — this is the most impactful compaction pattern.
+- If auto-compaction fires, you will see `Trigger: auto` printed by the hook callback
+- If it does not fire (not enough tokens generated), the demo still completes successfully — the file summaries are returned
+- Either way, remember: every sub-agent in your pipeline (Researcher, Writer) already discards its context on return — that is the most impactful compaction pattern in a multi-agent system
 
 ---
 
