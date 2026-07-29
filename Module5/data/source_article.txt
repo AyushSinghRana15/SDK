@@ -1,0 +1,15 @@
+Quantum Computing Overview
+
+Quantum computing uses qubits instead of classical bits. Unlike bits that are 0 or 1, qubits can exist in superposition. This allows quantum computers to solve certain problems exponentially faster.
+
+Key concepts:
+- Superposition: qubits exist in multiple states at once
+- Entanglement: qubits correlate regardless of distance
+- Interference: amplify correct answers, cancel wrong ones
+
+Current challenges:
+- Decoherence: qubits lose state quickly
+- Error rates: quantum gates are noisy
+- Temperature: need near absolute zero
+
+Applications: drug discovery, cryptography, optimization.
