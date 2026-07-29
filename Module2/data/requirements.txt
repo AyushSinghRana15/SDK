@@ -1,7 +1,7 @@
 # Dependencies for Lab 2
 # Updated to latest PATCH/MINOR within each existing major version.
-requests==2.34.2
-numpy==1.26.4
-pandas==1.5.3
-flask==2.3.3
-pytest==7.4.4
+requests>=2.31.0
+numpy>=1.24.0
+pandas>=1.5.0
+flask>=2.3.0
+pytest>=7.4.0
