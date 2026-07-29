@@ -315,7 +315,7 @@ Create a sub-agent that only has the `Edit` tool. Its job is to take the researc
 async def run_writer(findings: str, template_path: str, output_path: str) -> str:
     """Write findings into the report template using Edit tool only."""
     options = ClaudeAgentOptions(
-        allowed_tools=["Edit"],
+        allowed_tools=["Read", "Edit"],
         permission_mode="bypass",
         model="claude-haiku-4-5-20251001",
     )
