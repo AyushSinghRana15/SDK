@@ -381,7 +381,7 @@ Define a task that will cause the agent to use Edit and Write tools. The hook wi
 
 ```python
 # Target directory for the agent to work on
-TARGET_DIR = "/path/to/your/project"  # <-- Change this to your target directory
+TARGET_DIR = "data"  # <-- Change this to your target directory
 
 # Natural language task for the agent
 TASK = f"""
