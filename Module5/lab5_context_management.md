@@ -109,7 +109,7 @@ The SDK provides built-in auto-compaction that kicks in when:
 | Trigger | Behavior |
 |---------|----------|
 | Token threshold exceeded | SDK summarizes older turns to free space |
-| Manual compaction request | Call `compaction()` to trigger immediately |
+| `PreCompact` hook event | Fires before auto-compaction — observe when and why it triggers |
 | Sub-agent handoff | Natural compaction point — sub-agent context is discarded after return |
 
 ---
@@ -259,7 +259,7 @@ import os
 import json
 import asyncio
 from dotenv import load_dotenv
-from claude_agent_sdk import query, ClaudeAgentOptions
+from claude_agent_sdk import query, ClaudeAgentOptions, HookMatcher
 ```
 
 ## Configure API Keys
@@ -388,6 +388,54 @@ if report_file.exists():
 else:
     print("Report not found.")
 ```
+
+---
+
+### Step 6 — Observe Context Compaction with a `PreCompact` Hook
+
+The SDK auto-compacts the context window when token usage exceeds a threshold, summarizing older turns to free space. You can observe this with a `PreCompact` hook, which fires before auto-compaction occurs. Sub-agent handoffs are also natural compaction points — when a sub-agent returns, its entire context is discarded.
+
+This demo registers a `PreCompact` hook and runs a query that generates enough context to trigger auto-compaction.
+
+```python
+from claude_agent_sdk import HookMatcher
+
+async def log_compaction(hook_input, tool_use_id, context):
+    """Log when auto-compaction fires."""
+    print(f"  Trigger: {hook_input.get('trigger', 'unknown')}")
+    if hook_input.get("custom_instructions"):
+        print(f"  Instructions: {hook_input['custom_instructions'][:200]}")
+    return {}
+
+options = ClaudeAgentOptions(
+    allowed_tools=["Read"],
+    model="claude-haiku-4-5-20251001",
+    hooks={
+        "PreCompact": [
+            HookMatcher(
+                hooks=[log_compaction],
+            ),
+        ],
+    },
+)
+
+prompt = """Read ALL files in the data/ directory. For each file, return its full path, size in bytes, and a 1-paragraph summary of its contents. Be thorough and detailed."""
+result = ""
+async for message in query(prompt=prompt, options=options):
+    if hasattr(message, 'content') and message.content:
+        result = message.content
+    if hasattr(message, 'result') and message.result:
+        result = message.result
+
+print(f"\nFiles analyzed. Result: {len(result)} chars")
+print("\nIf auto-compaction was triggered, you saw PreCompact log messages above.")
+print("Even without auto-compaction, every sub-agent handoff in this pipeline")
+print("discards the sub-agent's context — that's natural compaction at work.")
+```
+
+**What to observe:**
+- If the `PreCompact` hook fires, you'll see `Trigger: auto` with details on what was compacted.
+- Whether or not auto-compaction fires, each sub-agent in your pipeline discards its context on return — this is the most impactful compaction pattern.
 
 ---
 
