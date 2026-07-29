@@ -1,3 +1,6 @@
+# Copyright 2026
+# This file is part of the project.
+
 """Data models."""
 
 from dataclasses import dataclass

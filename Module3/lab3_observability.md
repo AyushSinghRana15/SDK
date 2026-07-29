@@ -102,18 +102,18 @@ flowchart LR
     style F fill:#e3f2fd,stroke:#1565c0,color:#0d47a1
 ```
 
-1. **Hook Events** — Points in the agent loop where hooks can fire (`PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `Stop`, etc.)
-2. **HookMatcher** — Matches specific tools (by name) to callback functions
-3. **Callback** — Your Python function that receives the hook input and can log, modify, or block execution
+1. **Hook Events** — Points in the agent loop where hooks can fire (`PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `Stop`, etc.). Each event fires at a specific moment in the tool-use lifecycle, giving you fine-grained control over when your callbacks execute.
+2. **HookMatcher** — Matches specific tools (by name) to callback functions. The matcher uses a regex-style pipe-separated pattern (e.g., `"Edit|Write"`) to select which tools trigger which hooks, with a configurable timeout to prevent hung callbacks from blocking the agent loop.
+3. **Callback** — Your Python function that receives the hook input and can log, modify, or block execution. Callbacks are async functions that accept typed parameters (`input`, `tool_use_id`, `context`) and return a `HookJSONOutput` dict. Returning `{"continue_": True}` lets the agent proceed; returning `{"continue_": False}` or raising an exception can halt or redirect execution.
 
 ### Available Hook Events
 
-| Event | When It Fires | Common Use |
-|-------|---------------|------------|
-| `PreToolUse` | Before a tool executes | Validation, permission gating |
-| `PostToolUse` | After a tool succeeds | Logging, audit trails |
-| `PostToolUseFailure` | After a tool fails | Error tracking, alerts |
-| `Stop` | When the session stops | Cleanup, summary reports |
+| Event | When It Fires | Common Use | HookInput Contains |
+|-------|---------------|------------|-------------------|
+| `PreToolUse` | Before a tool executes | Validation, permission gating — inspect the tool name and input to decide whether to allow or block execution | `tool_name`, `tool_input` (the full input dict the tool will receive), `session_id` |
+| `PostToolUse` | After a tool succeeds | Logging, audit trails — record what the agent did, including the tool's output | `tool_name`, `tool_input`, `tool_result` (the output returned by the tool), `session_id` |
+| `PostToolUseFailure` | After a tool fails | Error tracking, alerts — capture failure details for debugging | `tool_name`, `tool_input`, `error` (exception or error message), `session_id` |
+| `Stop` | When the session stops | Cleanup, summary reports — flush buffers, close connections, generate a session summary | `session_id`, `stop_reason` (e.g., `"end_turn"`, `"max_tokens"`) |
 
 ### The `HookMatcher` Configuration
 
@@ -128,7 +128,7 @@ matcher = HookMatcher(
 )
 ```
 
-The matcher field uses a pipe-separated list of tool names. When the agent calls any matched tool, the SDK fires the hook event and runs your callbacks.
+The matcher field uses a pipe-separated list of tool names (it is treated as a regex pattern internally). When the agent calls any matched tool, the SDK fires the hook event and runs your callbacks. You can register multiple `HookMatcher` instances under the same event, each matching different tools with different callbacks. The `timeout` parameter (in seconds) prevents a slow or stuck callback from holding up the agent loop — if the callback exceeds the timeout, the SDK cancels it and proceeds with `{"continue_": True}` as the fallback.
 
 ### The Audit Logging Callback
 
@@ -320,10 +320,14 @@ print(f"OpenRouter key (Judge): {'Yes' if OPENROUTER_API_KEY else 'No'}")
 
 ### Step 1 — Define the Audit Logging Hook
 
-Create an async callback that logs every Edit and Write operation. The function receives the hook input (with tool name, file path, tool input) and appends a JSON entry to `audit.log`.
+Create an async callback that logs every Edit and Write operation. The function receives three parameters:
+- **`input`** — A `HookInput` dict containing `tool_name` (e.g., `"Edit"`), `tool_input` (the arguments passed to the tool, such as `file_path` and `content`), and `session_id`.
+- **`tool_use_id`** — A unique string identifier for this specific tool invocation, useful for correlating log entries with the agent's response.
+- **`context`** — A `HookContext` object that provides an `abort_signal` (an `asyncio.Event`) for future use, allowing hooks to signal cancellation across long-running operations.
+
+The callback appends a JSON entry to `audit.log` and returns `{"continue_": True}` to signal the SDK that the agent loop should proceed normally. Returning `{"continue_": False}` would block the agent from continuing.
 
 ```python
-# Async callback that logs every Edit/Write to audit.log
 async def log_audit(input, tool_use_id, context):
     """PostToolUse hook: log file path, timestamp, and context."""
     tool_input = input.get("tool_input", {})
@@ -337,13 +341,11 @@ async def log_audit(input, tool_use_id, context):
         "session_id": input.get("session_id", ""),
     }
 
-    # Append to audit.log as a single JSON line
     with open("audit.log", "a") as f:
         f.write(json.dumps(entry) + "\n")
 
     print(f"[AUDIT] {entry['tool']} on {file_path} — logged")
 
-    # Return continue_=True so the agent loop proceeds normally
     return {"continue_": True}
 ```
 
@@ -351,19 +353,26 @@ async def log_audit(input, tool_use_id, context):
 
 ### Step 2 — Configure the Agent with Hooks
 
-Create an agent instance with execution tools and a `PostToolUse` hook bound to `Edit` and `Write`. The `HookMatcher` tells the SDK: "whenever Edit or Write finishes, call `log_audit`."
+Create an agent instance with execution tools and a `PostToolUse` hook bound to `Edit` and `Write`. The `ClaudeAgentOptions` object configures three things:
+1. **`allowed_tools`** — Which tools the agent is permitted to call (`["Bash", "Edit", "Write"]`). Only these tools will be available to the LLM during reasoning.
+2. **`permission_mode`** — Set to `"default"`, which prompts the user for approval on destructive actions. This complements the hook system: hooks provide visibility, permission mode provides safety.
+3. **`hooks`** — A dict mapping event names (`"PostToolUse"`) to lists of `HookMatcher` instances. Each `HookMatcher` tells the SDK: "whenever a tool matching this pattern finishes, call these callbacks."
+
+The `HookMatcher` uses:
+- **`matcher`** — A pipe-separated regex pattern matching tool names (e.g., `"Edit|Write"` means "match Edit OR Write").
+- **`hooks`** — A list of async callback functions to invoke when the matcher fires.
+- **`timeout`** — Maximum seconds the SDK waits for the callback to complete before proceeding.
 
 ```python
-# Configure the agent with execution tools and lifecycle hooks
 options = ClaudeAgentOptions(
     allowed_tools=["Bash", "Edit", "Write"],
-    permission_mode="default",  # prompts for approval on destructive actions
+    permission_mode="default",
     hooks={
-        "PostToolUse": [  # fire after every successful tool call
+        "PostToolUse": [
             HookMatcher(
-                matcher="Edit|Write",  # only match Edit and Write tools
-                hooks=[log_audit],     # list of async callbacks
-                timeout=30,            # seconds before hook times out
+                matcher="Edit|Write",
+                hooks=[log_audit],
+                timeout=30,
             ),
         ],
     },
@@ -377,13 +386,15 @@ print(f"Allowed tools: {options.allowed_tools}")
 
 ### Step 3 — Define the Task
 
-Define a task that will cause the agent to use Edit and Write tools. The hook will automatically log every modification.
+Define a task that will cause the agent to use Edit and Write tools. The hook will automatically log every modification. The task is designed to:
+- **Use `TARGET_DIR`** as the root directory the agent operates on — change this to point at any project with Python files.
+- **Trigger multiple Edit calls** — the agent must find every `.py` file and add a copyright header, which produces multiple `Edit` tool invocations.
+- **Include a safety constraint** — "Do NOT modify any existing code" prevents the agent from making unintended changes beyond the header.
+- **Include an idempotency check** — "if it doesn't already have one" prevents the agent from duplicating headers on re-runs.
 
 ```python
-# Target directory for the agent to work on
 TARGET_DIR = "data"  # <-- Change this to your target directory
 
-# Natural language task for the agent
 TASK = f"""
 Analyze the project at {TARGET_DIR} and add a comment header to every Python file.
 The header should be:
@@ -399,17 +410,19 @@ if it doesn't already have one.
 
 ### Step 4 — Run the Agent Loop
 
-Execute the agent. Every Edit and Write call will automatically fire the `PostToolUse` hook and append to `audit.log`.
+Execute the agent. Every Edit and Write call will automatically fire the `PostToolUse` hook and append to `audit.log`. Key points about this execution:
+- **`query()`** is an async generator function from the SDK that takes a `prompt` and `options`. It yields messages as the agent streams its response.
+- **`async for`** iterates over the stream. Each `message` is a partial or complete response from the agent. The loop accumulates the final content in `response`.
+- **Hooks fire automatically** — the SDK intercepts matched tool calls, invokes your callbacks, waits for their return value, and then continues the loop. You don't need to call hooks manually.
+- **Error handling** — if a hook callback raises an exception, the SDK catches it and logs a warning but does NOT crash the agent (unless the hook is configured as critical).
 
 ```python
-# Execute the agent loop
-# Hooks fire automatically on matched tool calls
 response = ""
 async for message in query(
     prompt=TASK,
     options=options
 ):
-    if hasattr(message, 'content'):
+    if hasattr(message, 'content') and message.content:
         response = message.content
 
 print("\n--- Agent Response ---\n")
@@ -420,9 +433,14 @@ print(response)
 
 ### Token Usage Monitoring
 
+After the agent completes, inspect the token consumption to understand the cost and efficiency of the run. The response object from the API carries usage statistics that break down how many tokens were consumed in different categories.
+
+- **Input tokens** — The system prompt, user messages, and any conversation history sent to the model. This represents the main cost driver for most sessions.
+- **Output tokens** — The tokens generated by the model in its response. These are typically more expensive per token than input tokens.
+- **Cache creation tokens** — Tokens written to the prompt cache the first time a prompt segment is seen within a session. This only incurs cost on the first occurrence.
+- **Cache read tokens** — Tokens read from the prompt cache in subsequent turns, reducing input token costs for repeated content like system prompts.
+
 ```python
-# Token usage monitoring
-# Track costs by monitoring input/output tokens
 usage = getattr(response, 'usage', None)
 
 if usage:
@@ -441,10 +459,12 @@ else:
 
 ### Step 5 — Verify the Audit Trail
 
-After the agent completes, read `audit.log` to see every file change recorded with timestamps and context.
+After the agent completes, read `audit.log` to see every file change recorded with timestamps and context. This verification step confirms that:
+- The `PostToolUse` hook fired correctly for every `Edit` and `Write` call.
+- Each log entry contains all expected fields (timestamp, tool, file_path, tool_use_id, session_id).
+- The agent's modifications are fully traceable — you can reconstruct exactly what happened and in what order.
 
 ```python
-# Read the audit log to verify every Edit/Write was captured
 from pathlib import Path
 
 audit_file = Path("audit.log")
@@ -463,10 +483,20 @@ else:
 
 ### Step 6 — LLM Judge (Free OpenRouter Model)
 
-Use a free OpenRouter model to evaluate the agent's output and audit trail quality.
+Use a free OpenRouter model to evaluate the agent's output and audit trail quality. This step demonstrates a pattern called **LLM-as-a-Judge**:
+- A separate LLM (not the agent) acts as an impartial evaluator.
+- You provide the judge with both the agent's output and the audit log.
+- The judge scores the agent's work on predefined criteria, giving you an automated quality check.
+- Using a free model (like Nvidia's Nemotron on OpenRouter) keeps costs at $0 for evaluation while still providing meaningful feedback.
+
+The judge is provided with a structured prompt that includes the full agent response and the complete audit log, then asked to score four dimensions on a 1–5 scale:
+
+- **Observability** — Did the hook capture every modification?
+- **Completeness** — Were all requested file changes applied?
+- **Audit quality** — Are log entries well-structured and useful?
+- **Safety** — Did the agent avoid unintended changes?
 
 ```python
-# Initialize OpenRouter client for LLM Judge
 from openai import OpenAI
 
 judge_client = OpenAI(
@@ -474,10 +504,8 @@ judge_client = OpenAI(
     api_key=OPENROUTER_API_KEY,
 )
 
-# Free model with tool support on OpenRouter
 JUDGE_MODEL = "nvidia/nemotron-3-ultra-550b-a55b:free"
 
-# Build the judge prompt with the agent's output and audit log
 audit_log_content = audit_file.read_text() if audit_file.exists() else "(empty)"
 
 judge_prompt = f"""
@@ -515,12 +543,6 @@ except Exception as e:
     print(f"\n--- LLM Judge Error ---")
     print(f"Error: {e}")
 ```
-
-The judge checks:
-- **Observability** — Did the hook capture every modification?
-- **Completeness** — Were all requested file changes applied?
-- **Audit quality** — Are log entries well-structured and useful?
-- **Safety** — Did the agent avoid unintended changes?
 
 ---
 

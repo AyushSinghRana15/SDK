@@ -1,3 +1,6 @@
+# Copyright 2026
+# This file is part of the project.
+
 """Helper utilities."""
 
 def format_output(text):
