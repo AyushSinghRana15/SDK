@@ -278,6 +278,7 @@ async def run_with_crash(task: str, session_store=None):
         allowed_tools=["Read", "Glob", "Grep", "Edit"],
         max_turns=2,
         session_store=session_store,
+        model="claude-haiku-4-5-20251001",
     )
     session_id = None
     try:
@@ -322,6 +323,7 @@ async def resume_session(session_id: str, follow_up: str):
     options = ClaudeAgentOptions(
         allowed_tools=["Read", "Glob", "Grep", "Edit"],
         resume=session_id,
+        model="claude-haiku-4-5-20251001",
     )
     async for message in query(prompt=follow_up, options=options):
         if isinstance(message, ResultMessage) and message.subtype == "success":

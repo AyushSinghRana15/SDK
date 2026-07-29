@@ -210,6 +210,7 @@ from claude_agent_sdk import (
 
 options = ClaudeAgentOptions(
     allowed_tools=["Bash", "Edit", "Write"],
+    model="claude-haiku-4-5-20251001",
     hooks={
         "PostToolUse": [
             HookMatcher(
@@ -364,19 +365,20 @@ The `HookMatcher` uses:
 - **`timeout`** — Maximum seconds the SDK waits for the callback to complete before proceeding.
 
 ```python
-options = ClaudeAgentOptions(
-    allowed_tools=["Bash", "Edit", "Write"],
-    permission_mode="default",
-    hooks={
-        "PostToolUse": [
-            HookMatcher(
-                matcher="Edit|Write",
-                hooks=[log_audit],
-                timeout=30,
-            ),
-        ],
-    },
-)
+    options = ClaudeAgentOptions(
+        allowed_tools=["Bash", "Edit", "Write"],
+        permission_mode="default",
+        model="claude-haiku-4-5-20251001",
+        hooks={
+            "PostToolUse": [
+                HookMatcher(
+                    matcher="Edit|Write",
+                    hooks=[log_audit],
+                    timeout=30,
+                ),
+            ],
+        },
+    )
 
 print("Agent configured with PostToolUse hooks.")
 print(f"Allowed tools: {options.allowed_tools}")

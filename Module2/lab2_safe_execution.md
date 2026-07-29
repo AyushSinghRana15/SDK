@@ -217,7 +217,8 @@ from claude_agent_sdk import query, ClaudeAgentOptions
 
 options = ClaudeAgentOptions(
     allowed_tools=["Bash", "Edit", "Write", "AskUserQuestion"],
-    permission_mode="default",  # prompts for human approval on destructive actions
+    permission_mode="default",
+    model="claude-haiku-4-5-20251001",
 )
 
 # The SDK handles permission checks automatically

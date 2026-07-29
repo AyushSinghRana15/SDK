@@ -70,7 +70,7 @@ async def run_production_local_explorer(target_path: str, report_filename: str) 
 
     options = ClaudeAgentOptions(
         allowed_tools=["Read", "Glob", "Grep"],
-        model="claude-sonnet-4-5",
+        model="claude-haiku-4-5-20251001",
     )
 
     task_prompt = f"""
