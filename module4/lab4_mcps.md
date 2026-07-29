@@ -85,7 +85,7 @@ flowchart TD
     I --> K["Tool returns markdown table"]
     J --> K
     K --> H
-    H -->|"final response"| L(["Write markdown report<br/>to notebooks/report"])
+    H -->|"final response"| L(["Write markdown report<br/>to report/"])
 
     style A fill:#e3f2fd,stroke:#1565c0,color:#0d47a1
     style B fill:#f5f5f5,stroke:#616161,color:#212121
@@ -167,6 +167,50 @@ The MCP flow has four important moving parts:
 
 MCP does not replace built-in tools. It extends the agent with capabilities that are not part of the default runtime.
 
+### In-process Custom Tools vs Standardized MCP Servers
+
+| Dimension | In-process Python/TypeScript Tools | Standardized MCP Servers |
+|-----------|------------------------------------|---------------------------|
+| **Where code runs** | Inside your application or notebook process | In a separate local process or remote service |
+| **Best for** | Lightweight labs, prototypes, app-specific helpers, notebook demos | Reusable integrations, shared team tools, production connectors |
+| **Implementation style** | Define functions directly with SDK helpers such as `@tool` and `create_sdk_mcp_server()` | Connect to a server over stdio, HTTP, or SSE |
+| **Operational setup** | Minimal infrastructure; import and run in the same Python/TypeScript runtime | Requires server configuration, transport settings, and often service credentials |
+| **Reuse boundary** | Usually tied to one app or repo | Portable across clients that understand MCP |
+| **Example** | `query_sql()` inside this notebook | A GitHub, filesystem, database, or internal API MCP server |
+
+This lab uses an **in-process Python tool** because the goal is to learn the mechanics without running a separate server. The same concepts apply in TypeScript: define a typed tool handler, validate inputs, register it with an MCP server, then allow the resulting `mcp__server__tool` name in the agent options.
+
+```mermaid
+flowchart LR
+    A["Custom tool code"] --> B{"How should it be hosted?"}
+    B -->|"Notebook or app-local helper"| C["In-process SDK MCP server<br/>Python / TypeScript"]
+    B -->|"Reusable integration"| D["Standard MCP server<br/>stdio / HTTP / SSE"]
+    C --> E["Register in mcp_servers"]
+    D --> E
+    E --> F["Grant allowed_tools"]
+    F --> G["Claude calls tool during query()"]
+
+    style A fill:#f5f5f5,stroke:#616161,color:#212121
+    style B fill:#fce4ec,stroke:#c62828,color:#b71c1c
+    style C fill:#fff3e0,stroke:#e65100,color:#bf360c
+    style D fill:#fff3e0,stroke:#e65100,color:#bf360c
+    style E fill:#e3f2fd,stroke:#1565c0,color:#0d47a1
+    style F fill:#fce4ec,stroke:#c62828,color:#b71c1c
+    style G fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20
+```
+
+### Authentication, Permissions, and Parameter Validation
+
+Tool integration has three separate safety layers:
+
+| Layer | What it controls | Where this lab handles it |
+|-------|------------------|---------------------------|
+| **Authentication** | Whether the app can call Claude or an external service | `ANTHROPIC_API_KEY` is loaded with `python-dotenv` |
+| **Tool permissions** | Whether Claude may call a specific tool | `allowed_tools=["mcp__sqlite__query_sql"]` |
+| **Parameter validation** | Whether a tool call's arguments are acceptable | `query_sql` checks SQL verb and rejects multi-statement input |
+
+These layers solve different problems. Authentication proves the application is allowed to access a service. Permissions decide which tools the agent can invoke. Parameter validation protects the tool implementation from malformed, unsafe, or out-of-scope arguments.
+
 ### MCP Tool Naming
 
 Every MCP tool receives a fully qualified name:
@@ -214,6 +258,12 @@ options = ClaudeAgentOptions(
 
 # Environment / Dependencies Setup
 
+Run the setup commands from the module folder:
+
+```bash
+cd module4
+```
+
 Install or synchronize dependencies using the project workflow:
 
 ```bash
@@ -229,7 +279,7 @@ uv run python -m ipykernel install --user --name module4-uv --display-name "Pyth
 Start Jupyter:
 
 ```bash
-uv run jupyter notebook notebooks/module4_mcps.ipynb
+uv run jupyter notebook module4_mcps.ipynb
 ```
 
 Set the API key before running the notebook:
@@ -498,7 +548,7 @@ response_text = await asyncio.to_thread(run_database_analyst_sync)
 The final report is saved here:
 
 ```text
-notebooks/report/module4_sqlite_report.md
+report/module4_sqlite_report.md
 ```
 
 ---
@@ -534,7 +584,7 @@ Extend the lab to explore MCP design choices:
 | `ANTHROPIC_API_KEY environment variable is not set` | API key is missing | Set `ANTHROPIC_API_KEY` in your shell or `.env` file |
 | MCP tool is visible but not called | Prompt does not require database access, or tool permission is missing | Confirm `allowed_tools=["mcp__sqlite__query_sql"]` |
 | Tool call is rejected as unsafe | SQL starts with a non-read-only verb or includes multiple statements | Use a single `SELECT`, `WITH`, `PRAGMA`, or `EXPLAIN` statement |
-| Notebook points to the wrong file | Older notes referenced `module4_agent_loop.ipynb` | Use `notebooks/module4_mcps.ipynb` |
+| Notebook points to the wrong file | Older notes referenced `module4_agent_loop.ipynb` or `notebooks/module4_mcps.ipynb` | Use `module4_mcps.ipynb` from inside the `module4` folder |
 | Final answer times out | Model call did not complete within 120 seconds | Increase `REQUEST_TIMEOUT_SECONDS` or rerun the cell |
 
 ---
@@ -545,9 +595,11 @@ In this lab, you connected the Agent SDK to a custom MCP tool and used it to que
 
 **Key takeaways:**
 - **MCP extends agent capabilities** - Agents can connect to databases, APIs, and domain-specific functions through a standard tool protocol.
+- **Custom tools can be local or standardized** - In-process Python/TypeScript tools are great for app-local logic; standalone MCP servers are better for reusable integrations.
 - **SDK MCP servers are notebook-friendly** - `create_sdk_mcp_server()` lets you expose local Python functions without running a separate server process.
 - **Tool names are fully qualified** - MCP tools use the `mcp__<server-name>__<tool-name>` convention.
 - **Permissions remain explicit** - `allowed_tools` controls which MCP tools Claude may call automatically.
+- **Authentication and validation are separate concerns** - API keys authenticate the app, while tool permissions and parameter checks constrain what the model can do.
 - **Tool handlers still need safeguards** - The SQL tool enforces read-only, single-statement access inside the handler.
 - **The agent loop stays familiar** - `query()` still manages turn execution, tool results, and final response generation just as it did in Lab 1.
 
