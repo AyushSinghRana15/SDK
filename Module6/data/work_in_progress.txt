@@ -1,0 +1,15 @@
+Refactoring Status: IN PROGRESS
+
+Phase: JWT Migration
+Target: src/auth/login.py
+
+Changes completed:
+  - Replaced session.login() with jwt.login()
+
+Pending changes (src/auth/middleware.py):
+  - Replace session validation with JWT validation
+  - Update token refresh logic
+  - Add JWT secret to environment config
+
+Last action: Edit on src/auth/login.py completed successfully.
+Next action: Read src/auth/middleware.py.

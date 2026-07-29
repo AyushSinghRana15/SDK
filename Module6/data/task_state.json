@@ -1,0 +1,13 @@
+{
+  "session_id": "ses_abc123",
+  "task": "Refactor the authentication module to use JWT tokens instead of session cookies.",
+  "progress": {
+    "phase": "files_identified",
+    "files_read": ["src/auth/login.py", "src/auth/middleware.py", "config/auth_config.py"],
+    "files_modified": ["src/auth/login.py"],
+    "last_tool_call": "Edit",
+    "last_tool_input": {"file_path": "src/auth/login.py", "old_string": "session.login(user)", "new_string": "jwt.login(user)"},
+    "changes_applied": 1,
+    "total_estimated_changes": 5
+  }
+}
