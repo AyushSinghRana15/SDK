@@ -294,12 +294,14 @@ async def run_researcher(topic: str) -> str:
         model="claude-haiku-4-5-20251001",
     )
     prompt = f"""Research the topic '{topic}' and return concise findings.
-Use WebSearch to find relevant information, then WebFetch to read details.
+You MUST call WebSearch first to find relevant information, then WebFetch to read details.
 Return a bullet-point summary of the most important facts only."""
     result = ""
     async for message in query(prompt=prompt, options=options):
         if hasattr(message, 'content') and message.content:
             result = message.content
+        if hasattr(message, 'result') and message.result:
+            result = message.result
     return result
 ```
 
@@ -314,6 +316,7 @@ async def run_writer(findings: str, template_path: str, output_path: str) -> str
     """Write findings into the report template using Edit tool only."""
     options = ClaudeAgentOptions(
         allowed_tools=["Edit"],
+        permission_mode="default",
         model="claude-haiku-4-5-20251001",
     )
     prompt = f"""Read the template at {template_path}, then write a completed
@@ -328,6 +331,8 @@ Do NOT modify any other files."""
     async for message in query(prompt=prompt, options=options):
         if hasattr(message, 'content') and message.content:
             result = message.content
+        if hasattr(message, 'result') and message.result:
+            result = message.result
     return result
 ```
 
