@@ -38,8 +38,15 @@ async def pre_tool_hook(input_data, tool_use_id, context):
     tool_input = input_data.get("tool_input", {})
     if tool_name in ("Edit",):
         try:
-            print(f"[AUTHORIZATION REQUIRED] Allow {tool_name}?")
-            answer = input(f"Allow {tool_name}? (y/n): ")
+            file_path = tool_input.get("file_path", tool_input.get("path", "unknown"))
+            old_str = tool_input.get("old_string", "")
+            new_str = tool_input.get("new_string", "")
+            print(f"[AUTHORIZATION REQUIRED] Edit: {file_path}")
+            if old_str:
+                print(f"  Replace: {old_str[:80]}")
+            if new_str:
+                print(f"  With:    {new_str[:80]}")
+            answer = input(f"Allow? (y/n): ")
             if answer.lower() == 'y':
                 return {
                     "hookSpecificOutput": {
