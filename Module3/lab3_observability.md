@@ -4,6 +4,18 @@ In Module 2, you gave your agent write access with safety guardrails. But in pro
 
 Module 3 introduces **lifecycle hooks** — callback functions that let you observe and react to the agent's every move. You'll build an audit trail that logs every file edit to `audit.log`, turning a black-box agent into a transparent, auditable system.
 
+### What is a Hook?
+
+A **hook** is a callback function that fires automatically at specific points in the agent's tool-use lifecycle, letting you observe, log, or gate actions without modifying the agent's core logic.
+
+### How Hooks Work in the SDK
+
+1. **Register** — Bind async callback functions to **hook events** (`PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `Stop`) using a `HookMatcher` that specifies which tool names (regex, e.g. `"Edit|Write"`) trigger which callbacks, plus a timeout.
+2. **Fire** — When the agent calls a matched tool (like `Edit`), the SDK intercepts the call at the configured event point and invokes your callback with typed parameters (`input`, `tool_use_id`, `context`).
+3. **React** — Your callback runs (logs to `audit.log`, checks permissions, etc.) and returns `{"continue_": True}` to let the agent proceed or `{"continue_": False}` to halt.
+
+Hooks are **non-invasive** — the agent never knows they exist. They're wired via `ClaudeAgentOptions.hooks`, not embedded in the agent's prompt or code, making them ideal for cross-cutting concerns like audit trails, compliance, and monitoring.
+
 ---
 
 # Problem Statement / Use Case Overview
