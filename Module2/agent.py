@@ -41,20 +41,27 @@ If you encounter any issues, stop and report what happened.
 async def _confirm(prompt: str) -> str:
     return await asyncio.to_thread(input, prompt)
 
-# PreToolUse hook: intercept Edit tool calls and ask for human approval
+# PreToolUse hook: intercept Edit/Bash/Write tool calls and ask for human approval
 async def pre_tool_hook(input_data, tool_use_id, context):
     tool_name = input_data.get("tool_name", "")
     tool_input = input_data.get("tool_input", {})
-    if tool_name in ("Edit",):
+    if tool_name in ("Edit", "Bash", "Write"):
         try:
-            file_path = tool_input.get("file_path", tool_input.get("path", "unknown"))
-            old_str = tool_input.get("old_string", "")
-            new_str = tool_input.get("new_string", "")
-            sys.stderr.write(f"[AUTHORIZATION REQUIRED] Edit: {file_path}\n")
-            if old_str:
-                sys.stderr.write(f"  Replace: {old_str[:120]}\n")
-            if new_str:
-                sys.stderr.write(f"  With:    {new_str[:120]}\n")
+            if tool_name == "Edit":
+                file_path = tool_input.get("file_path", tool_input.get("path", "unknown"))
+                old_str = tool_input.get("old_string", "")
+                new_str = tool_input.get("new_string", "")
+                sys.stderr.write(f"[AUTHORIZATION REQUIRED] Edit: {file_path}\n")
+                if old_str:
+                    sys.stderr.write(f"  Replace: {old_str[:120]}\n")
+                if new_str:
+                    sys.stderr.write(f"  With:    {new_str[:120]}\n")
+            elif tool_name == "Bash":
+                command = tool_input.get("command", "")
+                sys.stderr.write(f"[AUTHORIZATION REQUIRED] Bash: {command[:200]}\n")
+            elif tool_name == "Write":
+                file_path = tool_input.get("file_path", tool_input.get("path", "unknown"))
+                sys.stderr.write(f"[AUTHORIZATION REQUIRED] Write: {file_path}\n")
             sys.stderr.flush()
             answer = await _confirm("Allow? (y/n): ")
             if answer.lower() == 'y':
@@ -81,12 +88,12 @@ async def pre_tool_hook(input_data, tool_use_id, context):
         }
     }
 
-# Configure the agent with read-only + execution tools, and the Edit approval hook
+# Configure the agent with execution tools and the approval hook
 options = ClaudeAgentOptions(
     tools=["Bash", "Edit", "Write", "Read", "Glob", "Grep"],
     hooks={
         "PreToolUse": [
-            HookMatcher(matcher="Edit", hooks=[pre_tool_hook]),
+            HookMatcher(matcher="Bash|Edit|Write", hooks=[pre_tool_hook]),
         ],
     },
     model="claude-haiku-4-5-20251001",
