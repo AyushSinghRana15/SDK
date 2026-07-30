@@ -397,7 +397,7 @@ def inspect_session(session_id: str):
 **Expected output (example):**
 ```
 --- Session ses_abc1... (4 messages) ---
-  [0] USER: Read ./data/task_state.json and ./data/work_in_progress.txt...
+  [0] USER: Read /Users/.../data/task_state.json and /Users/.../data/work_in_progress.txt...
   [1] ASSISTANT: {'role': 'assistant', 'content': [{'type': 'tool_use', 'name': 'Glob'...
   [2] USER: {'role': 'user', 'content': [{'type': 'tool_result', 'content': ['task_state.json']...
   [3] ASSISTANT: {'role': 'assistant', 'content': [{'type': 'tool_use', 'name': 'Read'...
@@ -464,10 +464,13 @@ This cell ties everything together — it runs the crash, inspects the session, 
 | 2. Inspect | `inspect_session(session_id)` | Reads the transcript — shows what the agent did before crashing |
 | 3. Resume | `resume_session(session_id, FOLLOW_UP)` | Agent loads full history and continues working |
 
-The `TASK` prompts the agent to read two data files and continue the refactoring work they describe. The `FOLLOW_UP` is deliberately minimal — just `"Continue exactly where you left off."` — because the session transcript already has all the context.
+The `TASK` uses absolute paths resolved at runtime so the model cannot misinterpret them as root-relative paths. The `FOLLOW_UP` is deliberately minimal — just `"Continue exactly where you left off."` — because the session transcript already has all the context.
 
 ```python
-TASK = "Read ./data/task_state.json and ./data/work_in_progress.txt, then continue the refactoring work described."
+from pathlib import Path
+
+DATA_DIR = Path("data").resolve()
+TASK = f"Read {DATA_DIR}/task_state.json and {DATA_DIR}/work_in_progress.txt, then continue the refactoring work described."
 FOLLOW_UP = "Continue exactly where you left off."
 
 async def main():
@@ -484,7 +487,7 @@ await main()
 [Crash] Turn limit reached (max_turns=2)
 
 --- Session ses_abc1... (5 messages) ---
-  [0] USER: Read ./data/task_state.json and ./data/work_in_progress.txt...
+  [0] USER: Read /Users/.../data/task_state.json and...
   [1] ASSISTANT: Glob tool call...
   [2] USER: Tool result...
   [3] ASSISTANT: Read tool call...
@@ -522,7 +525,7 @@ for s in sessions:
 **Expected output:**
 ```
 --- All Sessions (1) ---
-  ses_abc123def... | Read ./data/task_state.json and ./data/work_in_progress.txt... | 2026-07-29T04:30:00
+  ses_abc123def... | Read /Users/.../data/task_state.json and /Users/.../data/work_in_progress.txt... | 2026-07-29T04:30:00
 ```
 
 ---
