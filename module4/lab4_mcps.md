@@ -201,15 +201,34 @@ flowchart LR
 
 ### Authentication, Permissions, and Parameter Validation
 
-Tool integration has three separate safety layers:
+Tool integration has four separate safety layers:
 
 | Layer | What it controls | Where this lab handles it |
 |-------|------------------|---------------------------|
 | **Authentication** | Whether the app can call Claude or an external service | `ANTHROPIC_API_KEY` is loaded with `python-dotenv` |
 | **Tool permissions** | Whether Claude may call a specific tool | `allowed_tools=["mcp__sqlite__query_sql"]` |
+| **Runtime approval** | Whether a specific tool invocation is allowed at runtime | `can_use_tool` callback gates execution on user input |
 | **Parameter validation** | Whether a tool call's arguments are acceptable | `query_sql` checks SQL verb and rejects multi-statement input |
 
-These layers solve different problems. Authentication proves the application is allowed to access a service. Permissions decide which tools the agent can invoke. Parameter validation protects the tool implementation from malformed, unsafe, or out-of-scope arguments.
+These layers solve different problems. Authentication proves the application is allowed to access a service. Permissions decide which tools the agent can invoke. `can_use_tool` provides runtime human oversight for every tool call. Parameter validation protects the tool implementation from malformed, unsafe, or out-of-scope arguments.
+
+For environments where even read-only tool calls need human oversight, add a `can_use_tool` callback:
+
+```python
+async def can_use_tool(tool_name: str, input_data: dict, context):
+    response = input(f"Allow {tool_name}? (y/n): ")
+    if response.lower() == 'y':
+        return {"behavior": "allow", "updatedInput": input_data}
+    return {"behavior": "deny"}
+
+options = ClaudeAgentOptions(
+    mcp_servers={"sqlite": sqlite_server},
+    allowed_tools=["mcp__sqlite__query_sql"],
+    permission_mode="default",
+    can_use_tool=can_use_tool,
+    model="claude-haiku-4-5-20251001",
+)
+```
 
 ### MCP Tool Naming
 

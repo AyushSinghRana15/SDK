@@ -319,17 +319,34 @@ The key insight is the `session_id` extraction:
 The `try/except` block catches any exceptions (turn limit reached, network errors, etc.) and prints a crash message without losing the `session_id`.
 
 ```python
+async def can_use_tool(tool_name: str, input_data: dict, context):
+    if tool_name == "Edit":
+        response = input(f"Allow Edit on {input_data.get('file_path', 'unknown')}? (y/n): ")
+        if response.lower() == 'y':
+            return {"behavior": "allow", "updatedInput": input_data}
+        return {"behavior": "deny"}
+    return {"behavior": "allow", "updatedInput": input_data}
+
 async def run_with_crash(task: str, session_store=None):
     """Run agent with a low turn limit to simulate a crash."""
     options = ClaudeAgentOptions(
         allowed_tools=["Read", "Glob", "Grep", "Edit"],
         max_turns=2,
+        permission_mode="default",
+        can_use_tool=can_use_tool,
         session_store=session_store,
         model="claude-haiku-4-5-20251001",
     )
     session_id = None
+    async def prompt_stream():
+        yield {
+            "type": "user",
+            "message": {"role": "user", "content": task},
+            "parent_tool_use_id": None,
+            "session_id": "",
+        }
     try:
-        async for message in query(prompt=task, options=options):
+        async for message in query(prompt=prompt_stream(), options=options):
             if isinstance(message, ResultMessage):
                 session_id = message.session_id
                 if message.subtype == "success":
@@ -410,9 +427,18 @@ async def resume_session(session_id: str, follow_up: str):
     options = ClaudeAgentOptions(
         allowed_tools=["Read", "Glob", "Grep", "Edit"],
         resume=session_id,
+        permission_mode="default",
+        can_use_tool=can_use_tool,
         model="claude-haiku-4-5-20251001",
     )
-    async for message in query(prompt=follow_up, options=options):
+    async def prompt_stream():
+        yield {
+            "type": "user",
+            "message": {"role": "user", "content": follow_up},
+            "parent_tool_use_id": None,
+            "session_id": "",
+        }
+    async for message in query(prompt=prompt_stream(), options=options):
         if isinstance(message, ResultMessage) and message.subtype == "success":
             print(f"[Resumed] {message.result[:300]}")
 ```

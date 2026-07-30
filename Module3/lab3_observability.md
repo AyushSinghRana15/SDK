@@ -356,7 +356,7 @@ async def log_audit(input, tool_use_id, context):
 
 Create an agent instance with execution tools and a `PostToolUse` hook bound to `Edit` and `Write`. The `ClaudeAgentOptions` object configures three things:
 1. **`allowed_tools`** — Which tools the agent is permitted to call (`["Bash", "Edit", "Write"]`). Only these tools will be available to the LLM during reasoning.
-2. **`permission_mode`** — Set to `"default"`, which prompts the user for approval on destructive actions. This complements the hook system: hooks provide visibility, permission mode provides safety.
+2. **`permission_mode`** — Set to `"default"`, which pairs with a `can_use_tool` callback to prompt the user for approval on destructive actions. This complements the hook system: hooks provide visibility, `can_use_tool` provides safety.
 3. **`hooks`** — A dict mapping event names (`"PostToolUse"`) to lists of `HookMatcher` instances. Each `HookMatcher` tells the SDK: "whenever a tool matching this pattern finishes, call these callbacks."
 
 The `HookMatcher` uses:
@@ -365,22 +365,31 @@ The `HookMatcher` uses:
 - **`timeout`** — Maximum seconds the SDK waits for the callback to complete before proceeding.
 
 ```python
-    options = ClaudeAgentOptions(
-        allowed_tools=["Bash", "Edit", "Write"],
-        permission_mode="bypassPermissions",
-        model="claude-haiku-4-5-20251001",
-        hooks={
-            "PostToolUse": [
-                HookMatcher(
-                    matcher="Edit|Write",
-                    hooks=[log_audit],
-                    timeout=30,
-                ),
-            ],
-        },
-    )
+async def can_use_tool(tool_name: str, input_data: dict, context):
+    if tool_name in ("Bash", "Edit", "Write"):
+        response = input(f"Allow {tool_name}? (y/n): ")
+        if response.lower() == 'y':
+            return {"behavior": "allow", "updatedInput": input_data}
+        return {"behavior": "deny"}
+    return {"behavior": "allow", "updatedInput": input_data}
 
-print("Agent configured with PostToolUse hooks.")
+options = ClaudeAgentOptions(
+    allowed_tools=["Bash", "Edit", "Write"],
+    permission_mode="default",
+    can_use_tool=can_use_tool,
+    model="claude-haiku-4-5-20251001",
+    hooks={
+        "PostToolUse": [
+            HookMatcher(
+                matcher="Edit|Write",
+                hooks=[log_audit],
+                timeout=30,
+            ),
+        ],
+    },
+)
+
+print("Agent configured with PostToolUse hooks and can_use_tool.")
 print(f"Allowed tools: {options.allowed_tools}")
 ```
 
@@ -419,9 +428,17 @@ Execute the agent. Every Edit and Write call will automatically fire the `PostTo
 - **Error handling** — if a hook callback raises an exception, the SDK catches it and logs a warning but does NOT crash the agent (unless the hook is configured as critical).
 
 ```python
+async def prompt_stream():
+    yield {
+        "type": "user",
+        "message": {"role": "user", "content": TASK},
+        "parent_tool_use_id": None,
+        "session_id": "",
+    }
+
 response = ""
 async for message in query(
-    prompt=TASK,
+    prompt=prompt_stream(),
     options=options
 ):
     if hasattr(message, 'content') and message.content:

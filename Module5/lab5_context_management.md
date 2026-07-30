@@ -96,7 +96,6 @@ flowchart LR
 3. **Writer context** — Receives only the researcher's condensed findings, then edits the report template. Toolset limited to `Edit`.
 
 ### Token Efficiency Comparison
-
 | Approach | Context Per Agent | Total Tokens | Degradation Risk |
 |----------|------------------|--------------|------------------|
 | Single agent | Full history (~200k) | ~200k | High — context drift over long sessions |
@@ -359,7 +358,8 @@ Create the second specialized sub-agent. The Writer has the opposite toolset fro
 
 This cell creates a `ClaudeAgentOptions` with:
 - **allowed_tools**: `["Read", "Edit"]` — file read/write, no web capabilities
-- **permission_mode**: `"bypassPermissions"` — auto-approves file edits (no interactive prompts)
+- **can_use_tool**: An async callback that gates the `Edit` tool on human approval
+- **permission_mode**: `"default"` — invokes the callback before executing execution tools
 - **model**: `claude-haiku-4-5-20251001`
 
 The prompt passes the Researcher's findings directly into the instructions via an f-string:
@@ -373,11 +373,20 @@ The prompt passes the Researcher's findings directly into the instructions via a
 The Writer is deliberately told to **not modify any other files** — this prevents it from accidentally altering anything outside the report.
 
 ```python
+async def can_use_tool(tool_name: str, input_data: dict, context):
+    if tool_name == "Edit":
+        response = input(f"Allow Edit on {input_data.get('file_path', 'unknown')}? (y/n): ")
+        if response.lower() == 'y':
+            return {"behavior": "allow", "updatedInput": input_data}
+        return {"behavior": "deny"}
+    return {"behavior": "allow", "updatedInput": input_data}
+
 async def run_writer(findings: str, template_path: str, output_path: str) -> str:
     """Write findings into the report template using Edit tool only."""
     options = ClaudeAgentOptions(
         allowed_tools=["Read", "Edit"],
-        permission_mode="bypassPermissions",
+        permission_mode="default",
+        can_use_tool=can_use_tool,
         model="claude-haiku-4-5-20251001",
     )
     prompt = f"""Read the template at {template_path}, then write a completed
@@ -388,8 +397,17 @@ Findings to incorporate:
 
 Replace every placeholder in the template with real content.
 Do NOT modify any other files."""
+
+    async def prompt_stream():
+        yield {
+            "type": "user",
+            "message": {"role": "user", "content": prompt},
+            "parent_tool_use_id": None,
+            "session_id": "",
+        }
+
     result = ""
-    async for message in query(prompt=prompt, options=options):
+    async for message in query(prompt=prompt_stream(), options=options):
         if hasattr(message, 'content') and message.content:
             result = message.content
         if hasattr(message, 'result') and message.result:
@@ -477,7 +495,6 @@ print(result)
 
 [TextBlock(text="Perfect! I've successfully created the completed report...")]
 ```
-
 The report content will vary based on what the Researcher finds. The key metric is the number of chars gathered — if it is very small (< 10), the Researcher may not have called `WebSearch` successfully.
 
 ---

@@ -31,8 +31,9 @@ This is especially useful for:
 | **System prompt** | Instructions defining the agent's role and safety constraints |
 | **User task** | Natural-language task describing what the agent should do |
 | **Target project** | Path to a project with outdated dependencies |
-| **Allowed tools** | `Bash`, `Edit`, `Write`, `AskUserQuestion` |
-| **Permission mode** | Configuration requiring human approval for destructive actions |
+| **Allowed tools** | `Bash`, `Edit`, `Write` — execution capabilities for modifying files and running commands |
+| **can_use_tool callback** | Async function that inspects each tool call and returns allow/deny before execution |
+| **Permission mode** | `"default"` — paired with `can_use_tool` to gate destructive actions on human approval |
 | **Anthropic API Key** | Used to authenticate with the Claude API |
 
 ---
@@ -50,9 +51,9 @@ flowchart TD
     D -->|"Bash command"| F{"Permission check:\ndestructive?"}
     D -->|"Edit file"| G{"Permission check:\nwrite operation?"}
     F -->|"Safe"| H["Bash executes\ncommand"]
-    F -->|"Destructive"| I["AskUserQuestion\nrequests approval"]
+    F -->|"Destructive"| I["can_use_tool callback:\napprove / deny"]
     G -->|"Safe"| J["Edit modifies\nfile"]
-    G -->|"Write operation"| K["AskUserQuestion\nrequests approval"]
+    G -->|"Write operation"| K["can_use_tool callback:\napprove / deny"]
     I -->|"Approved"| H
     I -->|"Rejected"| L["Skip action,\ninform user"]
     K -->|"Approved"| J
@@ -98,17 +99,12 @@ flowchart LR
         F["Write"]
     end
     
-    subgraph "Safety Tools"
-        G["AskUserQuestion"]
-    end
-    
     A --> H["Safe by default\nNo approval needed"]
     B --> H
     C --> H
-    D --> I{"Requires\napproval?"}
+    D --> I["can_use_tool callback\nchecks & prompts"]
     E --> I
     F --> I
-    G --> J["Human decides:\nApprove or Reject"]
 
     style A fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20
     style B fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20
@@ -116,42 +112,46 @@ flowchart LR
     style D fill:#fff3e0,stroke:#e65100,color:#bf360c
     style E fill:#fff3e0,stroke:#e65100,color:#bf360c
     style F fill:#fff3e0,stroke:#e65100,color:#bf360c
-    style G fill:#fff9c4,stroke:#f9a825,color:#f57f17
     style H fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20
-    style I fill:#fce4ec,stroke:#c62828,color:#b71c1c
-    style J fill:#fff9c4,stroke:#f9a825,color:#f57f17
+    style I fill:#fff9c4,stroke:#f9a825,color:#f57f17
 ```
 
 1. **Read-only tools** (`Read`, `Glob`, `Grep`) — Safe by default. The agent can explore files without any risk of modification.
 2. **Execution tools** (`Bash`, `Edit`, `Write`) — Can modify the system. Require permission controls to prevent unintended changes.
-3. **Safety tool** (`AskUserQuestion`) — Allows the agent to pause and ask for human clarification when uncertain about an action.
+3. **`can_use_tool` callback** — An async function you provide that the SDK calls before executing any tool. Return `{"behavior": "allow"}` to proceed or `{"behavior": "deny"}` to block execution.
 
 ### Permission Modes
 
 | Mode | Behavior | Use Case |
 |------|----------|----------|
 | `auto` | All tools execute without approval | Trusted environments, read-only tasks |
-| `require_approval` | Destructive actions require human confirmation | Production systems, code modification |
+| `default` | Execution tools trigger approval via `can_use_tool` callback | Production systems, code modification |
 | `reject_all` | Write operations are blocked | Exploratory tasks, auditing only |
 
-### The `AskUserQuestion` Tool
+### The `can_use_tool` Callback
 
-When the agent is uncertain about a decision, it can use `AskUserQuestion` to present options to the human:
+The `can_use_tool` callback is an async function you provide to inspect and approve/deny every tool call before it executes. This replaces the need for a separate `AskUserQuestion` tool — the SDK automatically invokes your callback when a tool requires approval:
 
 ```python
-# Agent can ask: "Should I update this dependency?"
-# Human responds with a choice from the provided options
-response = agent.query(
-    task="Update the outdated dependency",
-    tools=[Bash(), Edit(), Write(), AskUserQuestion()]
-)
+from claude_agent_sdk import ClaudeAgentOptions, query
+
+async def can_use_tool(tool_name: str, input_data: dict, context):
+    # Prompt for approval on execution tools
+    if tool_name in ("Bash", "Edit", "Write"):
+        response = input(f"Allow {tool_name}? (y/n): ")
+        if response.lower() == 'y':
+            return {"behavior": "allow", "updatedInput": input_data}
+        return {"behavior": "deny"}
+    # Auto-approve read-only tools
+    return {"behavior": "allow", "updatedInput": input_data}
 ```
 
 This creates a **human-in-the-loop** pattern where:
-1. Agent identifies an action that needs clarification
-2. Agent presents the question with multiple-choice options
-3. Human reviews and selects an option
-4. Agent continues based on the human's decision
+1. SDK intercepts every tool call before execution
+2. Your `can_use_tool` callback inspects the tool name and input
+3. For destructive tools (`Bash`, `Edit`, `Write`), it prompts for human approval
+4. Read-only tools pass through automatically
+5. If denied, the SDK skips the action and the agent adapts
 
 ---
 
@@ -186,7 +186,7 @@ A modified project with updated dependencies and passing tests. The agent produc
 | **LLM (Agent)** | Claude via Anthropic API — reasons about tasks and selects tools |
 | **LLM (Judge)** | Free model via OpenRouter — evaluates agent output |
 | **Execution Tools** | `Bash`, `Edit`, `Write` — file and command execution capabilities |
-| **Safety Tools** | `AskUserQuestion` — human-in-the-loop clarification |
+| **Safety Callback** | `can_use_tool` — async callback that gates destructive tool execution |
 | **Language** | Python 3.10+ |
 | **Environment** | `ANTHROPIC_API_KEY` (SDK), `OPENROUTER_API_KEY` (Judge) |
 
@@ -205,24 +205,43 @@ A modified project with updated dependencies and passing tests. The agent produc
 
 ### Permission Mode Configuration
 
-The Agent SDK provides built-in permission controls for execution tools. When you include `Bash`, `Edit`, or `Write` in your tools list, the SDK automatically:
+The Agent SDK provides built-in permission controls for execution tools. When you include `Bash`, `Edit`, or `Write` in your tools list, you pair them with a `can_use_tool` callback to gate destructive actions:
 
-- Validates commands before execution
-- Blocks dangerous operations (like `rm -rf`, `git push --force`)
-- Logs all tool calls for auditing
-- Supports human-in-the-loop via `AskUserQuestion`
+- The SDK calls your callback before every tool execution
+- Return `{"behavior": "allow"}` to proceed, or `{"behavior": "deny"}` to block
+- Read-only tools (like `Read`, `Glob`, `Grep`) pass through automatically
+- The callback receives the tool name, input data, and execution context
 
 ```python
-from claude_agent_sdk import query, ClaudeAgentOptions
+from claude_agent_sdk import ClaudeAgentOptions, query
+
+async def can_use_tool(tool_name: str, input_data: dict, context):
+    if tool_name in ("Bash", "Edit", "Write"):
+        response = input(f"Allow {tool_name} with {input_data}? (y/n): ")
+        if response.lower() == 'y':
+            return {"behavior": "allow", "updatedInput": input_data}
+        return {"behavior": "deny"}
+    return {"behavior": "allow", "updatedInput": input_data}
 
 options = ClaudeAgentOptions(
-    allowed_tools=["Bash", "Edit", "Write", "AskUserQuestion"],
-    permission_mode="bypassPermissions",
+    allowed_tools=["Bash", "Edit", "Write"],
+    permission_mode="default",
+    can_use_tool=can_use_tool,
     model="claude-haiku-4-5-20251001",
 )
 
-# The SDK handles permission checks automatically
-response = query("Update the outdated dependency", options=options)
+# The SDK calls can_use_tool before executing any tool
+async def prompt_stream():
+    yield {
+        "type": "user",
+        "message": {"role": "user", "content": "Update the outdated dependency"},
+        "parent_tool_use_id": None,
+        "session_id": "",
+    }
+
+async for message in query(prompt=prompt_stream(), options=options):
+    if hasattr(message, 'content'):
+        print(message.content)
 ```
 
 ### Human-in-the-Loop Pattern
@@ -231,23 +250,31 @@ response = query("Update the outdated dependency", options=options)
 sequenceDiagram
     participant U as User
     participant A as Agent
+    participant S as SDK
+    participant C as can_use_tool
     participant T as Tool
     
     U->>A: Provide task
     A->>A: Reason about approach
-    A->>T: Execute safe tool (Read)
+    A->>S: Request tool call (Read)
+    S->>C: can_use_tool("Read", input, context)
+    C->>C: Auto-allow (read-only)
+    C->>S: {"behavior": "allow"}
+    S->>T: Execute tool
     T->>A: Return result
     A->>A: Need to modify file?
-    alt Safe action
-        A->>T: Execute tool
-        T->>A: Return result
-    else Destructive action
-        A->>U: AskUserQuestion("Should I proceed?")
-        U->>A: Approve/Reject
+    alt Destructive action
+        A->>S: Request tool call (Edit)
+        S->>C: can_use_tool("Edit", input, context)
+        C->>U: Approve Edit?
+        U->>C: Yes / No
         alt Approved
-            A->>T: Execute tool
+            C->>S: {"behavior": "allow"}
+            S->>T: Execute tool
             T->>A: Return result
-        else Rejected
+        else Denied
+            C->>S: {"behavior": "deny"}
+            S->>A: Tool blocked
             A->>A: Skip action, try alternative
         end
     end
@@ -260,10 +287,11 @@ Before giving an agent execution capabilities:
 
 1. **Start with read-only tools** — Verify the agent can explore and understand the codebase
 2. **Add execution tools incrementally** — Introduce `Bash` or `Edit` one at a time
-3. **Configure permission mode** — Use `require_approval` for production environments
-4. **Test with safe commands first** — Try `ls`, `cat`, `git status` before `rm`, `git push`
-5. **Monitor agent behavior** — Watch tool calls to ensure the agent doesn't take unexpected actions
-6. **Implement rollback** — Ensure you can revert changes if the agent makes mistakes
+3. **Configure `can_use_tool`** — Gate destructive actions with explicit human approval
+4. **Set `permission_mode="default"`** — Ensures the SDK invokes your callback for execution tools
+5. **Test with safe commands first** — Try `ls`, `cat`, `git status` before `rm`, `git push`
+6. **Monitor agent behavior** — Watch tool calls to ensure the agent doesn't take unexpected actions
+7. **Implement rollback** — Ensure you can revert changes if the agent makes mistakes
 
 ---
 
@@ -347,20 +375,31 @@ Create an agent instance with a system prompt and execution tools. The system pr
 #### Configure the Agent
 
 This cell creates a `ClaudeAgentOptions` with:
-- **allowed_tools**: `["Bash", "Edit", "Write", "AskUserQuestion"]` — execution and safety tools
+- **allowed_tools**: `["Bash", "Edit", "Write"]` — execution tools for modifying files and running commands
+- **can_use_tool**: The callback function that gates destructive tool execution on human approval
+- **permission_mode**: `"default"` — instructs the SDK to invoke your callback before executing execution tools
 
 The Agent SDK automatically handles:
 - The tool-use loop (sending tasks, executing tools, re-prompting)
-- Permission controls for destructive actions
-- Human-in-the-loop clarification via `AskUserQuestion`
+- Invoking `can_use_tool` before every tool execution for approval
+- Blocking or allowing actions based on your callback's return value
 
 ```python
+from claude_agent_sdk import ClaudeAgentOptions, query
+
+async def can_use_tool(tool_name: str, input_data: dict, context):
+    if tool_name in ("Bash", "Edit", "Write"):
+        response = input(f"Allow {tool_name}? (y/n): ")
+        if response.lower() == 'y':
+            return {"behavior": "allow", "updatedInput": input_data}
+        return {"behavior": "deny"}
+    return {"behavior": "allow", "updatedInput": input_data}
+
 # Configure the agent with execution tools
-# The SDK automatically handles the tool-use loop with Claude
 options = ClaudeAgentOptions(
-    # Execution tools available to the agent at runtime.
-    allowed_tools=["Bash", "Edit", "Write", "AskUserQuestion"],
-    permission_mode="bypassPermissions",  # auto-approves all actions
+    allowed_tools=["Bash", "Edit", "Write"],
+    permission_mode="default",
+    can_use_tool=can_use_tool,
 )
 
 print("Agent configured.")
@@ -380,7 +419,8 @@ The task determines which tools the agent will use. For example, asking to "upda
 2. Use `Edit` to update the requirements file
 3. Use `Bash` to install updated packages
 4. Use `Bash` to run the test suite
-5. Use `AskUserQuestion` if uncertain about breaking changes
+
+The `can_use_tool` callback automatically intercepts each `Bash` and `Edit` call, prompting you for approval before the tool executes. Read-only tools like `Read`, `Glob`, and `Grep` pass through without prompting.
 
 ```python
 # Target directory with outdated dependencies
@@ -399,7 +439,7 @@ Steps:
 5. Run the test suite to verify nothing broke
 
 If you encounter any breaking changes or are unsure about a dependency update,
-use AskUserQuestion to clarify with the human before proceeding.
+ask the user for clarification before proceeding.
 """
 ```
 
@@ -412,58 +452,74 @@ Call `agent.query()` with the task. The SDK handles the entire loop: sending the
 Here is exactly what happens under the hood:
 
 1. **First prompt** — The SDK sends the task to Claude along with the system prompt and tool definitions. Claude analyzes the task and decides to call `Bash` to check current dependency versions.
-2. **Permission check** — The SDK checks if the action requires approval. If it's a safe command (like `cat` or `ls`), it executes immediately. If it's destructive (like `rm` or `git push`), it pauses for human approval.
-3. **Tool execution** — The SDK receives Claude's `tool_use` response, executes the tool locally, and appends the result as a `tool_result`.
+2. **Permission check via `can_use_tool`** — The SDK invokes your callback with the tool name and input. Your callback checks if it's a destructive tool (`Bash`, `Edit`, `Write`) and prompts for human approval. Read-only tools auto-approve.
+3. **Tool execution** — If approved, the SDK executes the tool locally and appends the result as a `tool_result`. If denied, the tool is skipped.
 4. **Re-prompt** — The SDK sends the updated conversation back to Claude. Claude sees the result and decides the next action.
-5. **More iterations** — Claude may call `Edit` to update the requirements file, `Bash` to install packages, or `AskUserQuestion` if uncertain.
+5. **More iterations** — Claude may call `Edit` to update the requirements file or `Bash` to install packages. Each call goes through the `can_use_tool` callback again.
 6. **Final answer** — When the dependencies are updated and tests pass, Claude produces a text response and the SDK returns it.
 
-The key insight: **you control what the agent can do**. The permission mode ensures destructive actions require your approval.
+The key insight: **you control what the agent can do**. The `can_use_tool` callback ensures every destructive action requires your explicit approval.
 
 ```mermaid
 flowchart LR
     A["agent.query(TASK)"] --> B["Claude: check versions"]
-    B --> C["SDK: execute Bash"]
-    C --> D["Claude: update requirements.txt"]
-    D --> E{"Permission check:\nwrite operation?"}
-    E -->|"Require approval"| F["AskUserQuestion"]
-    F --> G["Human approves"]
-    G --> H["SDK: execute Edit"]
-    E -->|"Auto approve"| H
-    H --> I["Claude: install packages"]
-    I --> J["SDK: execute Bash"]
-    J --> K["Claude: run tests"]
+    B --> C["can_use_tool checks\nBash call"]
+    C --> D["SDK: execute Bash"]
+    D --> E["Claude: update requirements.txt"]
+    E --> F["can_use_tool checks\nEdit call"]
+    F --> G{"Human approves?"}
+    G -->|"Yes"| H["SDK: execute Edit"]
+    G -->|"No"| I["SDK: skips edit,\nagent informed"]
+    H --> J["Claude: install packages"]
+    I --> J
+    J --> K["can_use_tool checks\nBash call"]
     K --> L["SDK: execute Bash"]
-    L --> M["Claude: final answer"]
-    M --> N["Return to caller"]
+    L --> M["Claude: run tests"]
+    M --> N["can_use_tool checks\nBash call"]
+    N --> O["SDK: execute Bash"]
+    O --> P["Claude: final answer"]
+    P --> Q["Return to caller"]
 
     style A fill:#e3f2fd,stroke:#1565c0,color:#0d47a1
     style B fill:#fff3e0,stroke:#e65100,color:#bf360c
-    style C fill:#f5f5f5,stroke:#616161,color:#212121
-    style D fill:#fff3e0,stroke:#e65100,color:#bf360c
-    style E fill:#fce4ec,stroke:#c62828,color:#b71c1c
+    style C fill:#fff9c4,stroke:#f9a825,color:#f57f17
+    style D fill:#f5f5f5,stroke:#616161,color:#212121
+    style E fill:#fff3e0,stroke:#e65100,color:#bf360c
     style F fill:#fff9c4,stroke:#f9a825,color:#f57f17
-    style G fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20
+    style G fill:#fce4ec,stroke:#c62828,color:#b71c1c
     style H fill:#f5f5f5,stroke:#616161,color:#212121
-    style I fill:#fff3e0,stroke:#e65100,color:#bf360c
-    style J fill:#f5f5f5,stroke:#616161,color:#212121
-    style K fill:#fff3e0,stroke:#e65100,color:#bf360c
+    style I fill:#ffebee,stroke:#c62828,color:#b71c1c
+    style J fill:#fff3e0,stroke:#e65100,color:#bf360c
+    style K fill:#fff9c4,stroke:#f9a825,color:#f57f17
     style L fill:#f5f5f5,stroke:#616161,color:#212121
-    style M fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20
-    style N fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20
+    style M fill:#fff3e0,stroke:#e65100,color:#bf360c
+    style N fill:#fff9c4,stroke:#f9a825,color:#f57f17
+    style O fill:#f5f5f5,stroke:#616161,color:#212121
+    style P fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20
+    style Q fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20
 ```
 
 ```python
 # Execute the agent loop
 # The SDK handles: task → Claude reasons → tool calls → observe → iterate
+async def prompt_stream():
+    yield {
+        "type": "user",
+        "message": {"role": "user", "content": TASK},
+        "parent_tool_use_id": None,
+        "session_id": "",
+    }
+
 async def run_agent():
     result = ""
     async for message in query(
-        prompt=TASK,
+        prompt=prompt_stream(),
         options=options
     ):
         if hasattr(message, 'content'):
             result = message.content
+        if hasattr(message, 'result') and message.result:
+            result = message.result
     return result
 
 # Use await in Jupyter (already has event loop)
@@ -599,7 +655,7 @@ You built a **safe execution agent** that can modify code and run commands while
 
 **Key takeaways:**
 - **Execution tools vs read-only tools** — `Bash`, `Edit`, and `Write` can modify the system and require careful permission controls.
-- **`AskUserQuestion`** — Allows the agent to handle uncertainty by presenting choices to the human.
+- **`can_use_tool` callback** — An async function that inspects every tool call and gates destructive actions on human approval.
 - **Human-in-the-loop** — Critical for production systems where unintended changes could cause damage.
 - **Token monitoring** — Track input/output tokens and cache usage to optimize costs.
 - **Hybrid approach** — Use Agent SDK with Anthropic key for tool-use, OpenRouter free models for LLM judge.
