@@ -6,6 +6,7 @@ import anyio
 from dotenv import load_dotenv
 from claude_agent_sdk import query, ClaudeAgentOptions, HookMatcher
 
+# Windows: set proactor event loop and patch anyio to drop unsupported 'user' kwarg
 if platform.system() == "Windows":
     asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
     _original_open_process = anyio.open_process
@@ -14,6 +15,7 @@ if platform.system() == "Windows":
         return await _original_open_process(*args, **kwargs)
     anyio.open_process = _patched_open_process
 
+# Load API keys from .env
 load_dotenv()
 
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
@@ -21,6 +23,7 @@ OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 
 TARGET_DIR = "data"
 
+# Task: update patch/minor versions only, then install & test
 TASK = f"""
 Analyze the project at {TARGET_DIR} and update only PATCH and MINOR versions.
 Do not upgrade major versions (e.g., numpy 1.x stays 1.x, pandas 1.x stays 1.x).
@@ -34,9 +37,11 @@ Steps:
 If you encounter any issues, stop and report what happened.
 """
 
+# Wrapper around input() so it can be called from async code
 async def _confirm(prompt: str) -> str:
     return await asyncio.to_thread(input, prompt)
 
+# PreToolUse hook: intercept Edit tool calls and ask for human approval
 async def pre_tool_hook(input_data, tool_use_id, context):
     tool_name = input_data.get("tool_name", "")
     tool_input = input_data.get("tool_input", {})
@@ -76,6 +81,7 @@ async def pre_tool_hook(input_data, tool_use_id, context):
         }
     }
 
+# Configure the agent with read-only + execution tools, and the Edit approval hook
 options = ClaudeAgentOptions(
     tools=["Bash", "Edit", "Write", "Read", "Glob", "Grep"],
     hooks={

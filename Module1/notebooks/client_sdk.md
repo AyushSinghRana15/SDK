@@ -1,4 +1,4 @@
-# Module 2: Client SDK Agent Loop
+# Module 1: Client SDK Agent Loop
 
 The Agent SDK's `query()` function handles the entire tool-use loop automatically — sending the task, dispatching tool calls, observing results, and re-prompting the model. But what does that loop look like under the hood?
 
@@ -261,10 +261,16 @@ messages = [
     {"role": "user", "content": TASK},
 ]
 
+final_answer = None
+
 for i in range(MAX_ITERATIONS):
     response = client.chat.completions.create(
         model=MODEL, messages=messages, tools=TOOLS,
     )
+    if not response.choices:
+        print(f"API returned no choices. Response: {response}")
+        break
+
     message = response.choices[0].message
 
     if message.tool_calls:
