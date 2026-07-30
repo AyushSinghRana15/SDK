@@ -364,11 +364,44 @@ print(f"OpenRouter key (Judge): {'Yes' if OPENROUTER_API_KEY else 'No'}")
 
 ---
 
-> **Note on Jupyter vs Terminal:** The `input()` approval prompt doesn't work reliably inside Jupyter's async event loop. A standalone script `agent_script.py` is provided in this directory. Run it in your terminal instead:
+> **Note on Jupyter vs Terminal:** The `input()` approval prompt doesn't work reliably inside Jupyter's async event loop. A standalone script `agent_script.py` is provided in this directory.
+> 
+> ### Running `agent_script.py`
+> 
+> The script uses a `PreToolUse` hook to gate destructive tools on human approval. Run it from the `Module2/` directory (the `TARGET_DIR` is set to `data/`, which is relative to that directory):
+> 
+> **Step 1 — Activate the virtual environment:**
 > ```bash
-> python Module2/agent_script.py
+> cd Module2
+> source data/venv/bin/activate
 > ```
-> This script uses a `PreToolUse` hook to gate destructive tools on human approval. Run it from the project root where your `.env` file is located.
+> 
+> **Step 2 — Ensure required packages are installed (one-time):**
+> ```bash
+> pip install claude-agent-sdk python-dotenv
+> ```
+> 
+> **Step 3 — Run the script:**
+> ```bash
+> python agent_script.py
+> ```
+> 
+> The agent will analyze `data/requirements.txt` and attempt to update patch/minor versions. Each time the agent tries to use the `Edit` tool, it will print the proposed change and prompt for approval:
+> ```
+> [AUTHORIZATION REQUIRED] Edit: data/requirements.txt
+>   Replace: requests==2.34.2
+>   With:    requests==2.32.3
+> Allow? (y/n):
+> ```
+> Type `y` to allow the edit, or `n` to deny it. Note that the agent may make multiple edit attempts as it refines its approach — keep an eye on the proposed changes before approving.
+> 
+> **Step 4 — If using the system Python instead of the venv:**
+> ```bash
+> # From the repo root (/Users/ayushsingh/Work/Labs/SDK)
+> cd Module2
+> python3 -m pip install claude-agent-sdk python-dotenv
+> python3 agent_script.py
+> ```
 
 ---
 
