@@ -18,34 +18,58 @@ load_dotenv()
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 
-TARGET_DIR = "/path/to/your/project"
+TARGET_DIR = "data"
 
 TASK = f"""
-Analyze the project at {TARGET_DIR} and update any outdated dependencies.
+Analyze the project at {TARGET_DIR} and update only PATCH and MINOR versions.
+Do not upgrade major versions (e.g., numpy 1.x stays 1.x, pandas 1.x stays 1.x).
 
 Steps:
-1. Read the requirements.txt (or package.json) to see current versions
-2. Check for newer versions of each dependency
-3. Update the dependency file with compatible versions
-4. Install the updated dependencies
-5. Run the test suite to verify nothing broke
+1. Read the requirements.txt to see current versions
+2. Update only to latest patch/minor within current major version
+3. Install the updated dependencies
+4. Run the test suite to verify nothing broke
 
-If you encounter any breaking changes or are unsure about a dependency update,
-use AskUserQuestion to clarify with the human before proceeding.
+If you encounter any issues, stop and report what happened.
 """
 
+async def can_use_tool(tool_name: str, input_data: dict, context):
+    if tool_name in ("Bash", "Edit", "Write"):
+        print(f"[AUTHORIZATION REQUIRED] Allow {tool_name}?")
+        response = input(f"Allow {tool_name}? (y/n): ")
+        if response.lower() == 'y':
+            return {"behavior": "allow", "updatedInput": input_data}
+        return {"behavior": "deny"}
+    return {"behavior": "allow", "updatedInput": input_data}
+
 options = ClaudeAgentOptions(
-    allowed_tools=["Bash", "Edit", "Write", "AskUserQuestion"],
-    permission_mode="bypassPermissions",
+    allowed_tools=["Bash", "Edit", "Write"],
+    permission_mode="default",
+    can_use_tool=can_use_tool,
     model="claude-haiku-4-5-20251001",
 )
 
+async def prompt_stream():
+    yield {
+        "type": "user",
+        "message": {"role": "user", "content": TASK},
+        "parent_tool_use_id": None,
+        "session_id": "",
+    }
+
 async def run_agent():
-    result = ""
-    async for message in query(prompt=TASK, options=options):
+    response = ""
+    async for message in query(prompt=prompt_stream(), options=options):
         if hasattr(message, 'content'):
-            result = message.content
-    return result
+            content = message.content
+            if isinstance(content, list):
+                texts = [getattr(b, 'text', str(b)) for b in content]
+                response = "\n".join(texts)
+            else:
+                response = content
+        if hasattr(message, "result") and message.result:
+            response = message.result
+    return response
 
 def main():
     response = asyncio.run(run_agent())
