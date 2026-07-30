@@ -364,11 +364,11 @@ print(f"OpenRouter key (Judge): {'Yes' if OPENROUTER_API_KEY else 'No'}")
 
 ---
 
-> **Note on Jupyter vs Terminal:** The `can_use_tool` callback uses `input()` to prompt for approval on destructive actions. Jupyter notebooks have trouble with `input()` inside async callbacks — prompts may not display or the kernel may hang. To avoid this, a standalone script `agent_script.py` is provided in this directory. Run it in your terminal instead:
+> **Note on Jupyter vs Terminal:** The `input()` approval prompt doesn't work reliably inside Jupyter's async event loop. A standalone script `agent_script.py` is provided in this directory. Run it in your terminal instead:
 > ```bash
 > python Module2/agent_script.py
 > ```
-> The script implements the exact same HITL pattern with `can_use_tool`, `permission_mode="default"`, and the same task. Run it from the project root where your `.env` file is located.
+> This script uses a `PreToolUse` hook to gate destructive tools on human approval. Run it from the project root where your `.env` file is located.
 
 ---
 

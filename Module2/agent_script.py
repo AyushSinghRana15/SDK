@@ -3,7 +3,7 @@ import asyncio
 import platform
 import anyio
 from dotenv import load_dotenv
-from claude_agent_sdk import query, ClaudeAgentOptions
+from claude_agent_sdk import query, ClaudeAgentOptions, HookMatcher
 
 if platform.system() == "Windows":
     asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
@@ -33,19 +33,41 @@ Steps:
 If you encounter any issues, stop and report what happened.
 """
 
-async def can_use_tool(tool_name: str, input_data: dict, context):
+async def pre_tool_hook(input_data, tool_use_id, context):
+    tool_name = input_data.get("tool_name", "")
+    tool_input = input_data.get("tool_input", {})
     if tool_name in ("Bash", "Edit", "Write"):
         print(f"[AUTHORIZATION REQUIRED] Allow {tool_name}?")
-        response = input(f"Allow {tool_name}? (y/n): ")
-        if response.lower() == 'y':
-            return {"behavior": "allow", "updatedInput": input_data}
-        return {"behavior": "deny"}
-    return {"behavior": "allow", "updatedInput": input_data}
+        answer = input(f"Allow {tool_name}? (y/n): ")
+        if answer.lower() == 'y':
+            return {
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "permissionDecision": "allow",
+                    "updatedInput": tool_input,
+                }
+            }
+        return {
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "deny",
+            }
+        }
+    return {
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "allow",
+            "updatedInput": tool_input,
+        }
+    }
 
 options = ClaudeAgentOptions(
-    allowed_tools=["Bash", "Edit", "Write"],
-    permission_mode="default",
-    can_use_tool=can_use_tool,
+    tools=["Bash", "Edit", "Write", "Read", "Glob", "Grep"],
+    hooks={
+        "PreToolUse": [
+            HookMatcher(matcher="Bash|Edit|Write", hooks=[pre_tool_hook]),
+        ],
+    },
     model="claude-haiku-4-5-20251001",
 )
 
