@@ -1,4 +1,5 @@
 import os
+import sys
 import asyncio
 import platform
 import anyio
@@ -33,6 +34,9 @@ Steps:
 If you encounter any issues, stop and report what happened.
 """
 
+async def _confirm(prompt: str) -> str:
+    return await asyncio.to_thread(input, prompt)
+
 async def pre_tool_hook(input_data, tool_use_id, context):
     tool_name = input_data.get("tool_name", "")
     tool_input = input_data.get("tool_input", {})
@@ -41,12 +45,13 @@ async def pre_tool_hook(input_data, tool_use_id, context):
             file_path = tool_input.get("file_path", tool_input.get("path", "unknown"))
             old_str = tool_input.get("old_string", "")
             new_str = tool_input.get("new_string", "")
-            print(f"[AUTHORIZATION REQUIRED] Edit: {file_path}")
+            sys.stderr.write(f"[AUTHORIZATION REQUIRED] Edit: {file_path}\n")
             if old_str:
-                print(f"  Replace: {old_str[:80]}")
+                sys.stderr.write(f"  Replace: {old_str[:120]}\n")
             if new_str:
-                print(f"  With:    {new_str[:80]}")
-            answer = input(f"Allow? (y/n): ")
+                sys.stderr.write(f"  With:    {new_str[:120]}\n")
+            sys.stderr.flush()
+            answer = await _confirm("Allow? (y/n): ")
             if answer.lower() == 'y':
                 return {
                     "hookSpecificOutput": {
