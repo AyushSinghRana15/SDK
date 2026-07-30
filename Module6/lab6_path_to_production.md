@@ -186,12 +186,14 @@ The recovery pattern has three steps:
 ```python
 from claude_agent_sdk import get_session_messages
 
+# Reconstruct the full conversation chain from a persisted session transcript
 messages = get_session_messages(session_id)
 for msg in messages:
     print(f"[{msg.type}] {msg.uuid}")
-    # msg.type: "user" | "assistant"
-    # msg.message: dict with role, content blocks
-    # msg.uuid: stable identifier for this message
+    # msg.type: "user" | "assistant" — who sent this message
+    # msg.message: dict with keys {role, content} where content is a list
+    #   of text blocks, tool_use blocks, or tool_result blocks
+    # msg.uuid: stable identifier for deduplication across resume calls
 ```
 
 ### Production Readiness Checklist
@@ -256,9 +258,11 @@ import asyncio
 from pathlib import Path
 from dotenv import load_dotenv
 from claude_agent_sdk import (
-    query, ClaudeAgentOptions,
-    ResultMessage,
-    get_session_messages, list_sessions,
+    query,  # Core: sends a prompt, yields streaming ResultMessage objects
+    ClaudeAgentOptions,  # Configures tools, model, max_turns, resume, permissions
+    ResultMessage,  # Terminal message — carries session_id + final result text
+    get_session_messages,  # Read-only: reconstructs full transcript from session ID
+    list_sessions,  # Scans ~/.claude/projects/<encoded-cwd>/ for all session files
 )
 ```
 
@@ -277,8 +281,10 @@ ANTHROPIC_API_KEY=sk-ant-...
 The cell below loads the key and verifies it is present:
 
 ```python
+# Load .env file into environment variables (does not override existing env vars)
 load_dotenv()
 
+# Read the API key from environment; set by .env or pre-exported in shell
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 
 print(f"Anthropic key (SDK): {'Yes' if ANTHROPIC_API_KEY else 'No'}")
@@ -319,6 +325,7 @@ The key insight is the `session_id` extraction:
 The `try/except` block catches any exceptions (turn limit reached, network errors, etc.) and prints a crash message without losing the `session_id`.
 
 ```python
+# Permission callback: prompts user to confirm every Edit tool invocation
 async def can_use_tool(tool_name: str, input_data: dict, context):
     if tool_name == "Edit":
         response = input(f"Allow Edit on {input_data.get('file_path', 'unknown')}? (y/n): ")
@@ -329,29 +336,36 @@ async def can_use_tool(tool_name: str, input_data: dict, context):
 
 async def run_with_crash(task: str, session_store=None):
     """Run agent with a low turn limit to simulate a crash."""
+    # Configure tools, turn limit, permission mode, and model
     options = ClaudeAgentOptions(
         allowed_tools=["Read", "Glob", "Grep", "Edit"],
-        max_turns=2,
+        max_turns=2,  # Forced early termination — simulates a production crash
         permission_mode="default",
-        can_use_tool=can_use_tool,
-        session_store=session_store,
+        can_use_tool=can_use_tool,  # Interactive confirmation for Edit calls
+        session_store=session_store,  # Optional custom persistence backend
         model="claude-haiku-4-5-20251001",
     )
-    session_id = None
+    session_id = None  # Will be set if a ResultMessage arrives before the crash
+    # The prompt must be an async generator that yields message dicts.
+    # Each yield is one user message in the conversation stream.
     async def prompt_stream():
         yield {
             "type": "user",
             "message": {"role": "user", "content": task},
-            "parent_tool_use_id": None,
-            "session_id": "",
+            "parent_tool_use_id": None,  # Root message — no parent tool call
+            "session_id": "",  # Empty = create new session; fill to resume existing
         }
     try:
+        # query() returns an async generator yielding streaming messages
         async for message in query(prompt=prompt_stream(), options=options):
+            # ResultMessage is the last message type — holds session_id and result
             if isinstance(message, ResultMessage):
-                session_id = message.session_id
+                session_id = message.session_id  # Capture UUID for recovery
                 if message.subtype == "success":
                     print(f"[Done] {message.result[:200]}")
     except Exception as e:
+        # Catches turn-limit, network, and SDK errors gracefully
+        # session_id is preserved in enclosing scope even after exception
         print(f"[Crash] {e}")
 
     return session_id
@@ -385,10 +399,14 @@ Each `SessionMessage` has:
 ```python
 def inspect_session(session_id: str):
     """Print the conversation history from a session."""
+    # get_session_messages() reads the persisted JSONL transcript from disk
+    # No agent runs — this is a pure read-only reconstruction of past activity
     messages = get_session_messages(session_id)
     print(f"\n--- Session {session_id[:8]}... ({len(messages)} messages) ---")
     for i, msg in enumerate(messages):
-        role = msg.type.upper()
+        role = msg.type.upper()  # "USER" or "ASSISTANT"
+        # msg.message is a dict: {role, content} where content has text/tool blocks
+        # Truncated to 120 chars for a compact readable overview
         preview = str(msg.message)[:120]
         print(f"  [{i}] {role}: {preview}")
     return messages
@@ -424,19 +442,23 @@ The `follow_up` prompt is typically a simple instruction like `"Continue exactly
 ```python
 async def resume_session(session_id: str, follow_up: str):
     """Resume a session from its last state."""
+    # resume=session_id tells the SDK to load the full history of the previous
+    # session and prepend it to the context window before adding the new prompt
     options = ClaudeAgentOptions(
         allowed_tools=["Read", "Glob", "Grep", "Edit"],
-        resume=session_id,
+        resume=session_id,  # Load transcript from ~/.claude/projects/<encoded-cwd>/
         permission_mode="default",
         can_use_tool=can_use_tool,
         model="claude-haiku-4-5-20251001",
     )
+    # follow_up is deliberately minimal (e.g. "Continue where you left off")
+    # because the restored transcript already contains the full task context
     async def prompt_stream():
         yield {
             "type": "user",
             "message": {"role": "user", "content": follow_up},
             "parent_tool_use_id": None,
-            "session_id": "",
+            "session_id": "",  # Empty because resume in options activates restoration
         }
     async for message in query(prompt=prompt_stream(), options=options):
         if isinstance(message, ResultMessage) and message.subtype == "success":
@@ -469,14 +491,21 @@ The `TASK` uses absolute paths resolved at runtime so the model cannot misinterp
 ```python
 from pathlib import Path
 
+# Path.resolve() converts relative "data" to an absolute path so the model
+# never misinterprets it as a root-relative path like /data/task_state.json
 DATA_DIR = Path("data").resolve()
+# TASK instructs the agent to read state files and continue unfinished work
 TASK = f"Read {DATA_DIR}/task_state.json and {DATA_DIR}/work_in_progress.txt, then continue the refactoring work described."
+# FOLLOW_UP is minimal — the restored session transcript has all prior context
 FOLLOW_UP = "Continue exactly where you left off."
 
 async def main():
+    # Phase 1: start agent with max_turns=2, capture session_id on crash/exit
     session_id = await run_with_crash(TASK)
     if session_id:
+        # Phase 2: read-only inspection of what the agent did before crashing
         inspect_session(session_id)
+        # Phase 3: resume with full context from the previous session
         await resume_session(session_id, FOLLOW_UP)
 
 await main()
@@ -516,9 +545,13 @@ The output confirms that the agent picked up exactly where it stopped — it did
 Sessions persist on disk indefinitely. Use `delete_session(id)` to clean up old ones.
 
 ```python
+# list_sessions() scans ~/.claude/projects/<encoded-cwd>/ and returns all sessions
 sessions = list_sessions()
 print(f"\n--- All Sessions ({len(sessions)}) ---")
 for s in sessions:
+    # session_id: UUID — use with resume= or get_session_messages()
+    # first_prompt: first 60 chars of initial user prompt
+    # created_at: timestamp (epoch ms or ISO 8601 depending on SDK version)
     print(f"  {s.session_id[:12]}... | {s.first_prompt[:60]} | {s.created_at}")
 ```
 
@@ -526,6 +559,72 @@ for s in sessions:
 ```
 --- All Sessions (1) ---
   ses_abc123def... | Read /Users/.../data/task_state.json and /Users/.../data/work_in_progress.txt... | 2026-07-29T04:30:00
+```
+
+---
+
+### Step 6 — Context Compaction Demo
+
+Context compaction is the SDK's mechanism for keeping the context window within model limits by summarizing older turns during a session. The `PreCompact` hook fires before auto-compaction runs, letting you observe when and why it triggers.
+
+Sub-agent handoffs are also natural compaction points — when a sub-agent finishes, its entire context is discarded.
+
+#### How the `PreCompact` Hook Works
+
+| Aspect | Detail |
+|--------|--------|
+| **Hook event** | `"PreCompact"` — fires before auto-compaction summarizes older turns |
+| **Hook input** | `trigger` (`"auto"` or `"manual"`), `custom_instructions` (the summary prompt) |
+| **Return value** | `dict` — return `{}` to let compaction proceed normally |
+
+This cell registers a `PreCompact` hook and runs a query that reads files from the `data/` directory. If auto-compaction fires, the hook logs the trigger reason and any summary instructions to the console.
+
+```python
+# Step 6 -- Context Compaction Demo
+# Register a PreCompact hook to observe when auto-compaction fires
+# Sub-agent handoffs are also natural compaction points
+
+async def log_compaction(hook_input, tool_use_id, context):
+    """Log when auto-compaction fires."""
+    print(f"  Trigger: {hook_input.get('trigger', 'unknown')}")
+    if hook_input.get("custom_instructions"):
+        print(f"  Instructions: {hook_input['custom_instructions'][:200]}")
+    return {}
+
+options = ClaudeAgentOptions(
+    allowed_tools=["Read"],
+    model="claude-haiku-4-5-20251001",
+    hooks={
+        "PreCompact": [
+            HookMatcher(
+                hooks=[log_compaction],
+            ),
+        ],
+    },
+)
+
+prompt = """Read ALL files in the data/ directory. For each file, return its full path, size in bytes, and a 1-paragraph summary of its contents. Be thorough and detailed."""
+result = ""
+async for message in query(prompt=prompt, options=options):
+    if hasattr(message, 'content') and message.content:
+        result = message.content
+    if hasattr(message, 'result') and message.result:
+        result = message.result
+
+print(f"\nFiles analyzed. Result: {len(result)} chars")
+print("\nIf auto-compaction was triggered, you saw PreCompact log messages above.")
+print("Every sub-agent handoff discards context — that is natural compaction.")
+```
+
+**Expected output (example):**
+```
+  Trigger: auto
+  Instructions: Condense the following conversation...
+
+Files analyzed. Result: 2847 chars
+
+If auto-compaction was triggered, you saw PreCompact log messages above.
+Every sub-agent handoff discards context — that is natural compaction.
 ```
 
 ---
