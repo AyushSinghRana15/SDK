@@ -563,59 +563,6 @@ for s in sessions:
 
 ---
 
-### Step 6 — Context Compaction Demo
-
-Context compaction is the SDK's mechanism for keeping the context window within model limits by summarizing older turns during a session. The `PreCompact` hook fires before auto-compaction runs, letting you observe when and why it triggers.
-
-Sub-agent handoffs are also natural compaction points — when a sub-agent finishes, its entire context is discarded.
-
-#### How the `PreCompact` Hook Works
-
-| Aspect | Detail |
-|--------|--------|
-| **Hook event** | `"PreCompact"` — fires before auto-compaction summarizes older turns |
-| **Hook input** | `trigger` (`"auto"` or `"manual"`), `custom_instructions` (the summary prompt) |
-| **Return value** | `dict` — return `{}` to let compaction proceed normally |
-
-This cell registers a `PreCompact` hook and runs a query that reads files from the `data/` directory. If auto-compaction fires, the hook logs the trigger reason and any summary instructions to the console.
-
-```python
-# Step 6 -- Context Compaction Demo
-# Register a PreCompact hook to observe when auto-compaction fires
-# Sub-agent handoffs are also natural compaction points
-
-async def log_compaction(hook_input, tool_use_id, context):
-    """Log when auto-compaction fires."""
-    print(f"  Trigger: {hook_input.get('trigger', 'unknown')}")
-    if hook_input.get("custom_instructions"):
-        print(f"  Instructions: {hook_input['custom_instructions'][:200]}")
-    return {}
-
-options = ClaudeAgentOptions(
-    allowed_tools=["Read"],
-    model="claude-haiku-4-5-20251001",
-    hooks={
-        "PreCompact": [
-            HookMatcher(
-                hooks=[log_compaction],
-            ),
-        ],
-    },
-)
-
-prompt = """Read ALL files in the data/ directory. For each file, return its full path, size in bytes, and a 1-paragraph summary of its contents. Be thorough and detailed."""
-result = ""
-async for message in query(prompt=prompt, options=options):
-    if hasattr(message, 'content') and message.content:
-        result = message.content
-    if hasattr(message, 'result') and message.result:
-        result = message.result
-
-print(f"\nFiles analyzed. Result: {len(result)} chars")
-print("\nIf auto-compaction was triggered, you saw PreCompact log messages above.")
-print("Every sub-agent handoff discards context — that is natural compaction.")
-```
-
 **Expected output (example):**
 ```
   Trigger: auto

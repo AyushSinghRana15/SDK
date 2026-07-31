@@ -164,6 +164,7 @@ A completed research report with gathered facts synthesized into structured mark
 ```python
 async def run_researcher(topic: str) -> str:
     """Spawn a researcher sub-agent with web tools only."""
+    # Restrict tools: web access only — no file write capability
     options = ClaudeAgentOptions(
         allowed_tools=["WebSearch", "WebFetch"],
     )
@@ -172,9 +173,10 @@ async def run_researcher(topic: str) -> str:
         prompt=f"Research: {topic}. Return concise findings.",
         options=options
     ):
+        # hasattr guards handle both intermediate TextBlock and final ResultMessage
         if hasattr(message, 'content'):
             result = message.content
-    return result
+    return result  # Only the result string survives — sub-agent context is discarded
 ```
 
 ### Sub-agent Isolation
@@ -268,7 +270,7 @@ import os
 import json
 import asyncio
 from dotenv import load_dotenv
-from claude_agent_sdk import query, ClaudeAgentOptions, HookMatcher
+from claude_agent_sdk import query, ClaudeAgentOptions, HookMatcher  # query: sends prompts; ClaudeAgentOptions: configures agents; HookMatcher: routes hook events
 ```
 
 ## Configure API Keys
@@ -286,8 +288,10 @@ ANTHROPIC_API_KEY=sk-ant-...
 The cell below loads the key and verifies it is present:
 
 ```python
+# Load .env file into environment variables (does not override existing env vars)
 load_dotenv()
 
+# Read the API key from environment; set by .env or pre-exported in shell
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 
 print(f"Anthropic key (SDK): {'Yes' if ANTHROPIC_API_KEY else 'No'}")
@@ -326,6 +330,7 @@ This keeps the sub-agent's output small and focused — critical for efficient c
 ```python
 async def run_researcher(topic: str) -> str:
     """Gather research on a topic using web tools only."""
+    # Restricted toolset: read-only web access, no write capabilities
     options = ClaudeAgentOptions(
         allowed_tools=["WebSearch", "WebFetch"],
         model="claude-haiku-4-5-20251001",
@@ -335,6 +340,7 @@ You MUST call WebSearch first to find relevant information, then WebFetch to rea
 Return a bullet-point summary of the most important facts only."""
     result = ""
     async for message in query(prompt=prompt, options=options):
+        # Intermediate messages expose .content; final ResultMessage exposes .result
         if hasattr(message, 'content') and message.content:
             result = message.content
         if hasattr(message, 'result') and message.result:
@@ -385,8 +391,8 @@ async def run_writer(findings: str, template_path: str, output_path: str) -> str
     """Write findings into the report template using Edit tool only."""
     options = ClaudeAgentOptions(
         allowed_tools=["Read", "Edit"],
-        permission_mode="default",
-        can_use_tool=can_use_tool,
+        permission_mode="default",  # Invokes can_use_tool before execution tools
+        can_use_tool=can_use_tool,  # Gates Edit on human approval
         model="claude-haiku-4-5-20251001",
     )
     prompt = f"""Read the template at {template_path}, then write a completed
@@ -398,12 +404,14 @@ Findings to incorporate:
 Replace every placeholder in the template with real content.
 Do NOT modify any other files."""
 
+    # prompt_stream() must be an async generator yielding message dicts;
+    # each yield is one user message in the conversation stream
     async def prompt_stream():
         yield {
             "type": "user",
             "message": {"role": "user", "content": prompt},
-            "parent_tool_use_id": None,
-            "session_id": "",
+            "parent_tool_use_id": None,  # Root message — no parent tool call
+            "session_id": "",  # Empty = create new session
         }
 
     result = ""
@@ -446,10 +454,13 @@ This pattern keeps each context window small:
 async def run_coordinator(task: str, template_path: str, output_path: str) -> str:
     """Orchestrate research and writing phases."""
     print("[Coordinator] Starting research phase...")
+    # Phase 1: spawn Researcher in a fresh context window; await its findings
     findings = await run_researcher(task)
     print(f"[Coordinator] Research complete. {len(findings)} chars gathered.")
 
     print("[Coordinator] Starting writing phase...")
+    # Phase 2: hand off only the condensed findings to a fresh Writer context
+    # The Researcher's context was already discarded after return (compaction)
     report = await run_writer(findings, template_path, output_path)
     print("[Coordinator] Report written.")
 
@@ -475,10 +486,12 @@ Set the target paths and run the full orchestration. The `TEMPLATE_PATH` must po
 The `await run_coordinator(...)` call starts the entire pipeline. Because `run_coordinator` is async, this works in a Jupyter notebook's event loop. The pipeline is **sequential** — research completes before writing begins.
 
 ```python
-TEMPLATE_PATH = "data/report_template.md"
-OUTPUT_PATH = "data/completed_report.md"
-TASK = "Quantum Computing"
+TEMPLATE_PATH = "data/report_template.md"  # Template with placeholders to fill in
+OUTPUT_PATH = "data/completed_report.md"   # Destination written by the Writer
+TASK = "Quantum Computing"                 # Research topic passed to the Coordinator
 
+# Kick off the whole pipeline. Await blocks until research AND writing finish.
+# The pipeline is sequential — writing never starts before research completes.
 result = await run_coordinator(TASK, TEMPLATE_PATH, OUTPUT_PATH)
 print("\n--- Final Report ---\n")
 print(result)
@@ -517,12 +530,14 @@ If the file does not exist, the Writer may have been blocked by permissions or t
 ```python
 from pathlib import Path
 
+# Verify the Writer created the report on disk.
+# This runs locally — no SDK calls, no token usage.
 report_file = Path(OUTPUT_PATH)
 if report_file.exists():
     print("--- Completed Report ---")
-    print(report_file.read_text())
+    print(report_file.read_text())  # Dump the full markdown report
 else:
-    print("Report not found.")
+    print("Report not found.")  # Writer may have been blocked by permissions
 ```
 
 **Expected output (truncated example):**
@@ -558,20 +573,22 @@ This cell registers a `PreCompact` hook and runs a query that reads multiple fil
 ```python
 from claude_agent_sdk import HookMatcher
 
+# Hook callback: logs when auto-compaction fires.
+# Signature is (hook_input, tool_use_id, context) for all hook events.
 async def log_compaction(hook_input, tool_use_id, context):
     """Log when auto-compaction fires."""
     print(f"  Trigger: {hook_input.get('trigger', 'unknown')}")
     if hook_input.get("custom_instructions"):
         print(f"  Instructions: {hook_input['custom_instructions'][:200]}")
-    return {}
+    return {}  # Empty dict = let compaction proceed normally
 
 options = ClaudeAgentOptions(
     allowed_tools=["Read"],
     model="claude-haiku-4-5-20251001",
     hooks={
-        "PreCompact": [
+        "PreCompact": [  # Register hook on the PreCompact event
             HookMatcher(
-                hooks=[log_compaction],
+                hooks=[log_compaction],  # Callback invoked before compaction runs
             ),
         ],
     },
