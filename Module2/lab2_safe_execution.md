@@ -150,7 +150,7 @@ This creates a **human-in-the-loop** pattern where:
 1. SDK intercepts every tool call before execution
 2. Your `can_use_tool` callback inspects the tool name and input
 3. For destructive tools (`Bash`, `Edit`, `Write`), it prompts for human approval
-4. Read-only tools pass through automatically
+4. Read-only tools pass through automatically (only if included in `allowed_tools`)
 5. If denied, the SDK skips the action and the agent adapts
 
 ---
@@ -209,7 +209,7 @@ The Agent SDK provides built-in permission controls for execution tools. When yo
 
 - The SDK calls your callback before every tool execution
 - Return `{"behavior": "allow"}` to proceed, or `{"behavior": "deny"}` to block
-- Read-only tools (like `Read`, `Glob`, `Grep`) pass through automatically
+- Read-only tools (like `Read`, `Glob`, `Grep`) pass through automatically — but only when they are included in your `allowed_tools` list. They are not used otherwise.
 - The callback receives the tool name, input data, and execution context
 
 ```python
@@ -461,7 +461,7 @@ The task determines which tools the agent will use. For example, asking to "upda
 3. Use `Bash` to install updated packages
 4. Use `Bash` to run the test suite
 
-The `can_use_tool` callback automatically intercepts each `Bash` and `Edit` call, prompting you for approval before the tool executes. Read-only tools like `Read`, `Glob`, and `Grep` pass through without prompting.
+The `can_use_tool` callback automatically intercepts each `Bash` and `Edit` call, prompting you for approval before the tool executes. Read-only tools like `Read`, `Glob`, and `Grep` pass through without prompting — but only when they are in the `allowed_tools` list.
 
 ```python
 # Target directory with outdated dependencies
