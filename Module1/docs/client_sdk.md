@@ -314,13 +314,18 @@ Use a second LLM call to evaluate the agent's output. This is a common eval patt
 ```python
 judge_prompt = f"""
 Evaluate the agent output on: COVERAGE, ACCURACY, COMPLETENESS, FORMAT.
-Score each 1-5 and give an overall score.
+Score each 1-5 and give an overall score. Be strict.
+
+Respond with ONLY a compact JSON object and nothing else, using exactly these keys:
+{{"coverage": <int 1-5>, "accuracy": <int 1-5>, "completeness": <int 1-5>, "format": <int 1-5>, "overall": <int 1-5>}}
 """
 judge_response = client.chat.completions.create(
     model=MODEL,
     messages=[{"role": "user", "content": judge_prompt}],
 )
 ```
+
+LLMs may still wrap or pad the response with prose, so always parse the output defensively — try `json.loads()` first, then fall back to a regex extraction of the JSON object. If the response contains no JSON at all, re-prompt the judge to return strict JSON and retry a couple of times.
 
 The judge checks:
 - **Coverage** — Did the agent find all TODO/FIXME comments?
